@@ -2,7 +2,8 @@
 # rakabot-open - open Rakazo the way this machine already uses it, and, when
 # asked, switch the window that is already open to one bot.
 #
-#   rakabot-open [--prefer auto|web-app|browser] [--select NAME] [--pattern P]... <url>
+#   rakabot-open [--prefer auto|web-app|browser] [--select NAME]
+#                [--select-index N] [--pattern P]... <url>
 #
 # auto (the default) tries three things in order:
 #   1. focus a window that is already showing the server - an Omarchy web app
@@ -15,8 +16,10 @@
 # --prefer browser jumps straight to 3. --prefer web-app skips 3 and opens a web
 # app window even when no launcher is installed.
 #
-# --select NAME additionally switches the window that was focused to that bot,
-# through the app's own command palette (Ctrl+K, type the name, Enter). Rakazo
+# --select-index N (one-based, the position in the roster) switches the focused
+# window to that bot through the app's own command palette: Escape, Ctrl+K,
+# Ctrl+N. No text is typed. The palette only gives its first nine entries a
+# shortcut, so --select NAME falls back to typing the name for the rest. Rakazo
 # keeps the open bot in its address (/app/<botId>) but a running app window cannot
 # be navigated from outside, so the palette is the way in. The keystrokes are only
 # sent when the server's own window is verifiably focused - never into whatever
@@ -126,16 +129,21 @@ def type_keys(*arguments):
         return False
 
 
-def select_bot(address, name):
+def select_bot(address, index, name):
     """Switch the focused Rakazo window to a bot through its command palette.
 
-    Rakazo's own palette hotkey is Ctrl+K and the search field filters the roster,
-    so the name has to be unique enough to rank first. Escape first: a palette the
-    user left open would otherwise be closed by our Ctrl+K and the name would land
-    in whatever has focus - which is why nothing is typed unless the window we are
-    about to drive is verifiably the focused one.
+    Rakazo's own palette hotkey is Ctrl+K, and the palette gives each of the first
+    nine entries a Ctrl+<n> shortcut - the same order the roster arrives in, so an
+    index needs no typing at all. Past the ninth there is no shortcut, and the only
+    way left is typing the name into the search field, which is why the index is
+    preferred: a name can rank a different bot first (the palette matches more than
+    the name).
+
+    Escape first: a palette the user left open would otherwise be closed by our
+    Ctrl+K and the rest would land in whatever has focus - which is why nothing is
+    typed unless the window we are about to drive is verifiably the focused one.
     """
-    if not name or not address:
+    if not address or not (index or name):
         return False
     if active_window() != address:
         return False
@@ -144,6 +152,9 @@ def select_bot(address, name):
     time.sleep(KEYSTROKE_GAP)
     type_keys("-M", "ctrl", "-k", "k", "-m", "ctrl")
     time.sleep(KEYSTROKE_GAP)
+    if index and 1 <= index <= 9:
+        type_keys("-M", "ctrl", "-k", str(index), "-m", "ctrl")
+        return True
     type_keys("-d", "60", name)
     time.sleep(KEYSTROKE_GAP)
     type_keys("-k", "Return")
@@ -228,11 +239,11 @@ def open_in_browser(url):
 
 
 def parse_arguments(arguments):
-    options = {"url": "", "prefer": "auto", "patterns": [], "select": ""}
+    options = {"url": "", "prefer": "auto", "patterns": [], "select": "", "select_index": 0}
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in ("--prefer", "--pattern", "--select"):
+        if argument in ("--prefer", "--pattern", "--select", "--select-index"):
             if index + 1 >= len(arguments):
                 raise ValueError("%s needs a value" % argument)
             if argument == "--prefer":
@@ -241,6 +252,11 @@ def parse_arguments(arguments):
                 options["prefer"] = arguments[index + 1]
             elif argument == "--select":
                 options["select"] = arguments[index + 1]
+            elif argument == "--select-index":
+                try:
+                    options["select_index"] = int(arguments[index + 1])
+                except ValueError:
+                    raise ValueError("--select-index takes a number")
             else:
                 options["patterns"].append(arguments[index + 1])
             index += 2
@@ -279,13 +295,12 @@ def main():
     if options["prefer"] == "auto":
         address = find_window(windows(), patterns)
         if address and focus(address):
-            if options["select"]:
-                if select_bot(address, options["select"]):
-                    print("focused the open Rakazo window (%s) and switched to %s"
-                          % (address, options["select"]))
+            target = options["select"] or ("bot %d" % options["select_index"] if options["select_index"] else "")
+            if target:
+                if select_bot(address, options["select_index"], options["select"]):
+                    print("focused the open Rakazo window (%s) and switched to %s" % (address, target))
                 else:
-                    print("focused the open Rakazo window (%s); could not switch to %s"
-                          % (address, options["select"]))
+                    print("focused the open Rakazo window (%s); could not switch to %s" % (address, target))
             else:
                 print("focused the open Rakazo window (%s)" % address)
             return 0

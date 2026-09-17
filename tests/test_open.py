@@ -296,7 +296,19 @@ class PreferenceTest(OpenerHarness):
 class SelectTest(OpenerHarness):
     """Picking a bot switches the open window through Rakazo's own palette."""
 
-    def test_the_palette_is_driven_in_the_right_order(self):
+    def test_an_index_is_selected_without_typing_anything(self):
+        self.set_clients([self.window()])
+        self.set_active('0xabc')
+        result, calls = self.run_opener('--select-index', '4', URL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('switched to bot 4', result.stdout)
+        self.assertEqual(self.called(calls, 'wtype'), [
+            'wtype -k Escape',
+            'wtype -M ctrl -k k -m ctrl',
+            'wtype -M ctrl -k 4 -m ctrl',
+        ])
+
+    def test_a_name_past_the_ninth_bot_is_typed_and_confirmed(self):
         self.set_clients([self.window()])
         self.set_active('0xabc')
         result, calls = self.run_opener('--select', 'Web', URL)
@@ -309,26 +321,38 @@ class SelectTest(OpenerHarness):
             'wtype -k Return',
         ])
 
+    def test_an_index_outside_the_palette_shortcuts_falls_back_to_the_name(self):
+        self.set_clients([self.window()])
+        self.set_active('0xabc')
+        result, calls = self.run_opener('--select-index', '12', '--select', 'Web', URL)
+        self.assertEqual(self.called(calls, 'wtype'), [
+            'wtype -k Escape',
+            'wtype -M ctrl -k k -m ctrl',
+            'wtype -d 60 Web',
+            'wtype -k Return',
+        ])
+        self.assertNotIn('ctrl -k 12', ' '.join(self.called(calls, 'wtype')))
+
     def test_nothing_is_typed_when_our_window_is_not_the_focused_one(self):
         # The guard that matters: keystrokes must never land in whatever is in
         # front, where a stray Enter could send a message.
         self.set_clients([self.window()])
         self.set_active('0xsomeone-else')
-        result, calls = self.run_opener('--select', 'Web', URL)
+        result, calls = self.run_opener('--select-index', '4', URL)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.called(calls, 'wtype'), [])
-        self.assertIn('could not switch to Web', result.stdout)
+        self.assertIn('could not switch to bot 4', result.stdout)
 
     def test_nothing_is_typed_when_there_is_no_window_to_switch(self):
         self.web_app()
-        result, calls = self.run_opener('--select', 'Web', URL)
+        result, calls = self.run_opener('--select-index', '4', URL)
         self.assertEqual(self.called(calls, 'wtype'), [])
         self.assertIn('launched the Rakazo web app', result.stdout)
 
     def test_nothing_is_typed_when_the_browser_is_forced(self):
         self.set_clients([self.window()])
         self.set_active('0xabc')
-        result, calls = self.run_opener('--prefer', 'browser', '--select', 'Web', URL)
+        result, calls = self.run_opener('--prefer', 'browser', '--select-index', '4', URL)
         self.assertEqual(self.called(calls, 'wtype'), [])
         self.assertIn('in the browser', result.stdout)
 
@@ -336,17 +360,17 @@ class SelectTest(OpenerHarness):
         (self.bin / 'wtype').unlink()
         self.set_clients([self.window()])
         self.set_active('0xabc')
-        result, _ = self.run_opener('--select', 'Web', URL)
+        result, _ = self.run_opener('--select-index', '4', URL)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('could not switch to Web', result.stdout)
+        self.assertIn('could not switch to bot 4', result.stdout)
 
     def test_a_window_class_match_alone_still_allows_selecting(self):
         self.set_clients([self.window(**{'class': 'google-chrome', 'initialClass': 'google-chrome',
                                          'title': 'Rakazo - Google Chrome'})])
         self.set_active('0xabc')
-        result, calls = self.run_opener('--select', 'Chief', URL)
-        self.assertIn('switched to Chief', result.stdout)
-        self.assertEqual(len(self.called(calls, 'wtype')), 4)
+        result, calls = self.run_opener('--select-index', '1', URL)
+        self.assertIn('switched to bot 1', result.stdout)
+        self.assertEqual(len(self.called(calls, 'wtype')), 3)
 
 
 class ArgumentTest(OpenerHarness):

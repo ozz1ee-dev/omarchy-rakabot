@@ -99,10 +99,11 @@ the browser.
 
 `selectBot` (default on) makes picking a bot switch the open window to that bot.
 Rakazo keeps the open bot in its address, but a running window cannot be navigated
-from outside, so the switch goes through the app's own command palette (`Ctrl+K`,
-the bot's name, `Enter`). It needs `wtype` and Hyprland, and nothing is typed
-unless the Rakazo window is verifiably the focused one. Switch it off to only
-raise the window.
+from outside, so the switch goes through the app's own command palette
+(`Ctrl+K`, then the entry's `Ctrl+<n>` shortcut - no text is typed for the first
+nine bots; past that the name is typed into the palette's own search field). It
+needs `wtype` and Hyprland, and nothing is sent unless the Rakazo window is
+verifiably the focused one. Switch it off to only raise the window.
 
 `omarchy-shell ozz1ee.rakabot demo` swaps in a staged roster - fourteen invented
 bots across two sections - for screenshots and for showing the thing off. Call it

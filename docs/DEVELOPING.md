@@ -99,14 +99,20 @@ chasing a bug that is not there.
   *running* app window cannot be navigated from outside: Chrome opens a new app
   window per `--app=<url>` (reproduced: relaunching the same address made a second
   window), and Ctrl+L does not raise an omnibox in app mode.
-- The way in is the app's own command palette: `Ctrl+K`, type the bot's name, and
-  `Enter` selects the highlighted result. Verified end to end by the roster's own
-  unread flag going from 1 to 0, which is the app marking the thread it opened.
+- The way in is the app's own command palette: `Ctrl+K`, then the entry's shortcut.
+  The palette labels its first nine entries `Ctrl+1`..`Ctrl+9`, in the same order the
+  roster arrives in, so `--select-index N` selects without typing anything at all -
+  verified end to end by the picked bot's unread flag going 1 to 0, which is the app
+  marking the thread it opened.
+- **Prefer the index to the name. Typing a name is not reliable**: the palette
+  matches more than the name, so `--select Git` opened a different bot whose text
+  mentions GitHub, and the command still reported success. Past the ninth entry
+  there is no shortcut, so a name is the only fallback - treat it as best effort.
 - Two guards, both tested: `Escape` first (a palette the user left open would be
-  closed by our Ctrl+K and the name would then land somewhere else), and nothing is
-  typed at all unless `hyprctl activewindow` says the Rakazo window we are about to
-  drive is the focused one. Without that check a stray `Enter` could send a message.
-- The name has to be unique enough to rank first in the palette - names are not ids.
+  closed by our Ctrl+K, and the keystrokes would then land somewhere else), and
+  nothing at all is sent unless `hyprctl activewindow` says the Rakazo window we are
+  about to drive is the focused one. Without that check a stray `Enter` could send
+  a message, which is why the index path - no text, no `Enter` - is the default.
 
 **Rakazo's RPC surface is not a contract**
 

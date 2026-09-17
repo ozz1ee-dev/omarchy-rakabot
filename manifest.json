@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ozz1ee.rakabot",
   "name": "Rakabot",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "ozz1ee",
   "license": "Apache-2.0",
   "description": "Your Rakazo roster in the bar: every bot drawn as its own avatar, with an expression for its state and one keypress to the server.",
@@ -77,7 +77,7 @@
         "type": "boolean",
         "label": "Switch the open window to the picked bot",
         "defaultValue": true,
-        "description": "On: picking a bot raises Rakazo and switches it to that bot through its own command palette. Off: picking a bot only raises the window. Needs wtype and Hyprland; nothing is typed unless the Rakazo window is the focused one."
+        "description": "On: picking a bot raises Rakazo and switches it to that bot through its own command palette shortcut. Off: picking a bot only raises the window. Needs wtype and Hyprland; nothing is typed unless the Rakazo window is the focused one."
       },
       {
         "key": "openWith",

@@ -337,11 +337,16 @@ Panel {
   // bin/rakabot-open walks that list and falls back to the installed web app
   // launcher and then to the browser, so tapping a bot never opens a second copy
   // of a window you already have.
-  function openRakazo(selectName) {
+  function openRakazo(selectName, selectIndex) {
     var url = String(root.app.url || "")
     if (url !== "") {
       var args = [root.opener, "--prefer", root.openWith]
-      if (root.selectBot && selectName) args = args.concat(["--select", String(selectName)])
+      if (root.selectBot) {
+        // The palette shortcuts cover its first nine entries, and the roster order
+        // is the palette order; past that a name is all that is left.
+        if (selectIndex > 0 && selectIndex <= 9) args = args.concat(["--select-index", String(selectIndex)])
+        else if (selectName) args = args.concat(["--select", String(selectName)])
+      }
       args = args.concat([url])
       Quickshell.execDetached(args)
     }
@@ -353,9 +358,16 @@ Panel {
     if (cursor < 0 || cursor >= rows.length) return null
     return rows[cursor].kind === "bot" ? rows[cursor].bot : null
   }
+  // One-based position in the roster, which is the order the palette lists.
+  function botIndex(bot) {
+    if (!bot) return 0
+    for (var i = 0; i < bots.length; i++) if (bots[i].id === bot.id) return i + 1
+    return 0
+  }
+  function openBot(bot) { root.openRakazo(bot ? bot.name : "", root.botIndex(bot)) }
 
   // The plain "open the app" path: the mark, a right-click, or a heading.
-  function focusApp() { root.openRakazo("") }
+  function focusApp() { root.openRakazo("", 0) }
 
   IpcHandler {
     // Omarchy instantiates a bar widget more than once (a hidden copy is used
@@ -698,7 +710,7 @@ Panel {
         if (dx < 0) root.scrub = !root.scrub
         if (dy !== 0) root.moveCursor(dy)
       }
-      onActivateRequested: root.openRakazo(root.cursorBot ? root.cursorBot.name : "")
+      onActivateRequested: root.openBot(root.cursorBot)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
@@ -993,7 +1005,7 @@ Panel {
                     keyCatcher.pointerAt(e.x, e.y)
                   }
                   onExited: keyCatcher.pointerGone()
-                  onClicked: root.openRakazo(modelData.kind === "bot" ? modelData.bot.name : "")
+                  onClicked: root.openBot(modelData.kind === "bot" ? modelData.bot : null)
                   // Hover goes to the topmost item, so a row would otherwise
                   // starve the panel-wide tracker and the eyes would freeze
                   // exactly when you are looking at them.

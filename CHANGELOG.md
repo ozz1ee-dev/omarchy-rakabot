@@ -1,12 +1,20 @@
 # Changelog
 
+## 0.3.1
+
+- The switch now goes through the palette's own `Ctrl+<n>` shortcut by roster
+  position, so nothing is typed and nothing has to rank first: typing a name was
+  not reliable, because the palette matches more than the name (`Git` opened a bot
+  whose text mentions GitHub). Names are still used, best effort, past the ninth
+  bot, where the palette has no shortcut to give.
+
 ## 0.3.0
 
 - Picking a bot now switches the open Rakazo window to that bot, not just raises
   it. Rakazo keeps the open bot in its address but a running app window cannot be
   navigated from outside, so the switch drives the app's own command palette
-  (`Ctrl+K`, the bot's name, `Enter`) - verified by the roster's unread flag going
-  from 1 to 0 as the app opened the thread. Nothing is typed unless the Rakazo
+  (`Ctrl+K`, then the entry's shortcut) - verified by the roster's unread flag
+  going from 1 to 0 as the app opened the thread. Nothing is sent unless the Rakazo
   window is verifiably focused, and a palette left open is dismissed first.
 - New `selectBot` setting (default on) to keep the old raise-only behaviour.
 
