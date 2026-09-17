@@ -22,8 +22,8 @@ palette and shape list are Rakazo's, the settings labels, status wording,
 app-opening action, footer hint and demo roster are Rakazo's, and the panel's key
 hint is measured rather than fixed.
 
-New files, not derived from that project: bin/rakabot-setup, scripts/, tests/,
-manifest.json, README.md, CHANGELOG.md, docs/ and this NOTICE.
+New files, not derived from that project: bin/rakabot-setup, bin/rakabot-open,
+scripts/, tests/, manifest.json, README.md, CHANGELOG.md, docs/ and this NOTICE.
 
 Trademarks
 ----------

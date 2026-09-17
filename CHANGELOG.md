@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Picking a bot opens Rakazo where you already keep it: an open window first - an
+  Omarchy web app (`omarchy webapp add`), the Rakazo desktop app, or a browser -
+  then the installed web app launcher, then the browser. It used to always reach
+  for the browser even with a Rakazo web app window sitting right there.
+- New `openWith` setting (`auto`, `web-app`, `browser`) to force one of those.
+- New `bin/rakabot-open` does the deciding, with the cascade covered by PATH-shim
+  tests (`tests/test_open.py`).
+
 ## 0.1.3
 
 - Each derived file now carries a notice of modification at the top, as section

@@ -60,6 +60,15 @@ Panel {
 
   readonly property int maxBarAvatars: Math.max(1, Math.min(6, Number(setting("maxBarAvatars", 3))))
   readonly property string watcher: Qt.resolvedUrl("bin/rakabot-watch").toString().replace(/^file:\/\//, "")
+  readonly property string opener: Qt.resolvedUrl("bin/rakabot-open").toString().replace(/^file:\/\//, "")
+
+  // Where "open Rakazo" lands: the window you already have, or the web app you
+  // installed, or the browser. bin/rakabot-open decides, and this can force it.
+  readonly property var openPrefs: ["auto", "web-app", "browser"]
+  readonly property string openWith: {
+    var v = String(setting("openWith", "auto"))
+    return openPrefs.indexOf(v) >= 0 ? v : "auto"
+  }
 
   function setting(name, fallback) {
     var s = root.settings || ({})
@@ -318,17 +327,15 @@ Panel {
     return pick
   }
 
-  // Open Rakazo. There is no deep link to a single bot, so this raises a Rakazo
-  // window if one is open - the desktop app, Omarchy's web app wrapper, or the
-  // server in a browser tab - and otherwise opens the server's address.
-  readonly property var appWindowClasses: ["rakazo", "rakazo-desktop", "oomarchy-rakazo", "rakazo-web"]
+  // Open Rakazo where it already lives. Omarchy web apps report a window class
+  // built from the address they were made for, the desktop app reports its own,
+  // and either may be absent - bin/rakabot-open walks that list and falls back to
+  // the installed web app launcher and then to the browser, so tapping a bot
+  // never opens a second copy of a window you already have.
   function focusApp() {
     var url = String(root.app.url || "")
-    Quickshell.execDetached(["bash", "-c",
-      "addr=$(hyprctl clients -j | python3 -c \"import sys,json;d=json.load(sys.stdin);k=set(json.loads(sys.argv[1]));w=[c['address'] for c in d if (c.get('class') or '').lower() in k or (c.get('initialClass') or '').lower() in k];print(w[0] if w else '')\" \"$2\"); " +
-      "if [ -n \"$addr\" ]; then hyprctl dispatch \"hl.dsp.focus({ window = \\\"address:$addr\\\" })\" || hyprctl dispatch focuswindow \"address:$addr\"; " +
-      "elif [ -n \"$1\" ]; then uwsm-app -- xdg-open \"$1\"; fi",
-      "rakabot", url, JSON.stringify(root.appWindowClasses)])
+    if (url !== "")
+      Quickshell.execDetached([root.opener, "--prefer", root.openWith, url])
     root.close()
   }
 

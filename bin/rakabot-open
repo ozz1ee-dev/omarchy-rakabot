@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+# rakabot-open - open Rakazo the way this machine already uses it.
+#
+#   rakabot-open [--prefer auto|web-app|browser] [--pattern P]... <url>
+#
+# auto (the default) tries three things in order:
+#   1. focus a window that is already showing the server - an Omarchy web app
+#      (Chrome app windows report a class like chrome-<host>-...), the Rakazo
+#      desktop app, or a browser window titled after it
+#   2. otherwise launch the installed web app launcher for that address, if there
+#      is one (~/.local/share/applications/webapp-*.desktop)
+#   3. otherwise open the address in the default browser
+#
+# --prefer browser jumps straight to 3. --prefer web-app skips 3 and opens a web
+# app window even when no launcher is installed.
+#
+# Prints one line saying what it did, so a log tells the whole story.
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import urllib.parse
+
+APPLICATIONS = "~/.local/share/applications"
+DESKTOP_APP_CLASSES = ("rakazo", "rakazo-desktop")
+
+
+def applications_dir():
+    return os.path.expanduser(os.environ.get("RAKABOT_APPLICATIONS") or APPLICATIONS)
+
+
+def host_of(url):
+    parsed = urllib.parse.urlparse(url if "://" in url else "https://" + url)
+    return (parsed.hostname or "").lower()
+
+
+def windows():
+    """Every open window, as Hyprland reports it. Empty when it cannot answer."""
+    if not shutil.which("hyprctl"):
+        return []
+    try:
+        result = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=10)
+        clients = json.loads(result.stdout or "[]")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    return clients if isinstance(clients, list) else []
+
+
+def find_window(clients, patterns):
+    """Address of the first window matching any pattern, class before title."""
+    compiled = [re.compile(r"\b" + re.escape(pattern) + r"\b", re.IGNORECASE) for pattern in patterns if pattern]
+    for field in ("class", "initialClass", "title"):
+        for client in clients:
+            if not isinstance(client, dict):
+                continue
+            value = client.get(field)
+            if not isinstance(value, str):
+                continue
+            if any(pattern.search(value) for pattern in compiled):
+                return str(client.get("address") or "")
+    return ""
+
+
+def focus(address):
+    if not address:
+        return False
+    dispatch = "hl.dsp.focus({ window = \"address:%s\" })" % address
+    for command in (["hyprctl", "dispatch", dispatch],
+                    ["hyprctl", "dispatch", "focuswindow", "address:" + address]):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
+def exec_line(path):
+    try:
+        with open(path) as handle:
+            for line in handle:
+                if line.startswith("Exec="):
+                    return line[5:].strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def web_app_for(host, directory):
+    """The web app launcher whose address is this host, as (desktop id, Exec)."""
+    if not host:
+        return "", ""
+    try:
+        entries = sorted(name for name in os.listdir(directory) if name.endswith(".desktop"))
+    except OSError:
+        return "", ""
+    for name in entries:
+        line = exec_line(os.path.join(directory, name))
+        if "--app=" not in line:
+            continue
+        address = line.split("--app=", 1)[1].split()[0].strip("'\"") if line.split("--app=", 1)[1].strip() else ""
+        if host_of(address) == host:
+            return name[:-len(".desktop")], line
+    return "", ""
+
+
+def launch_web_app(identifier, line):
+    if identifier and shutil.which("gtk-launch"):
+        try:
+            if subprocess.run(["gtk-launch", identifier], capture_output=True, timeout=15).returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if not line:
+        return False
+    try:
+        subprocess.run(shlex.split(line), start_new_session=True, capture_output=True, timeout=15)
+        return True
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def open_as_web_app(url):
+    """A web app window with no launcher installed, the way Omarchy does it."""
+    launcher = shutil.which("omarchy-launch-webapp")
+    if not launcher:
+        return False
+    try:
+        return subprocess.run([launcher, url], capture_output=True, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def open_in_browser(url):
+    opener = shutil.which("xdg-open") or shutil.which("omarchy-launch-browser")
+    if not opener:
+        return False
+    try:
+        subprocess.run([opener, url], start_new_session=True, capture_output=True, timeout=15)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def parse_arguments(arguments):
+    options = {"url": "", "prefer": "auto", "patterns": []}
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ("--prefer", "--pattern"):
+            if index + 1 >= len(arguments):
+                raise ValueError("%s needs a value" % argument)
+            if argument == "--prefer":
+                if arguments[index + 1] not in ("auto", "web-app", "browser"):
+                    raise ValueError("--prefer takes auto, web-app or browser")
+                options["prefer"] = arguments[index + 1]
+            else:
+                options["patterns"].append(arguments[index + 1])
+            index += 2
+            continue
+        if argument.startswith("--"):
+            raise ValueError("unknown argument %s" % argument)
+        if options["url"]:
+            raise ValueError("expected one address")
+        options["url"] = argument
+        index += 1
+    if not options["url"]:
+        raise ValueError("usage: rakabot-open [--prefer auto|web-app|browser] <address>")
+    return options
+
+
+def main():
+    try:
+        options = parse_arguments(sys.argv[1:])
+    except ValueError as error:
+        sys.stderr.write("rakabot-open: %s\n" % error)
+        return 1
+
+    url, host = options["url"], host_of(options["url"])
+    if "://" not in url:
+        # A bare word is a typo, not an address; a bare hostname is fine.
+        if "." not in url.split("/")[0] or " " in url:
+            sys.stderr.write("rakabot-open: %s is not an address (try https://rakazo.example)\n" % url)
+            return 1
+        url = "https://" + url
+    if not host:
+        sys.stderr.write("rakabot-open: %s is not an address\n" % options["url"])
+        return 1
+    patterns = [host, *DESKTOP_APP_CLASSES, *options["patterns"]]
+    directory = applications_dir()
+
+    if options["prefer"] == "auto":
+        address = find_window(windows(), patterns)
+        if address and focus(address):
+            print("focused the open Rakazo window (%s)" % address)
+            return 0
+
+        identifier, line = web_app_for(host, directory)
+        if identifier and launch_web_app(identifier, line):
+            print("launched the Rakazo web app (%s)" % identifier)
+            return 0
+
+    elif options["prefer"] == "web-app":
+        identifier, line = web_app_for(host, directory)
+        if identifier and launch_web_app(identifier, line):
+            print("launched the Rakazo web app (%s)" % identifier)
+            return 0
+        if open_as_web_app(url):
+            print("opened %s as a web app window" % host)
+            return 0
+        sys.stderr.write("rakabot-open: no way to open a web app window here\n")
+        return 1
+
+    if open_in_browser(url):
+        print("opened %s in the browser" % host)
+        return 0
+    sys.stderr.write("rakabot-open: nothing could open %s\n" % url)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

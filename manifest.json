@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ozz1ee.rakabot",
   "name": "Rakabot",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "author": "ozz1ee",
   "license": "Apache-2.0",
   "description": "Your Rakazo roster in the bar: every bot drawn as its own avatar, with an expression for its state and one keypress to the server.",
@@ -28,6 +28,7 @@
       "barMetric": "avatars",
       "groupBySection": "true",
       "maxBarAvatars": 3,
+      "openWith": "auto",
       "ordering": "attention"
     },
     "schema": [
@@ -70,6 +71,18 @@
         "max": 6,
         "step": 1,
         "defaultValue": 3
+      },
+      {
+        "key": "openWith",
+        "type": "enum",
+        "label": "What opens when you pick a bot",
+        "options": [
+          "auto",
+          "web-app",
+          "browser"
+        ],
+        "defaultValue": "auto",
+        "description": "auto = the Rakazo window you already have open (an Omarchy web app, the desktop app or a browser), otherwise the web app launcher you installed, otherwise the browser; web-app = always a web app window; browser = always the browser."
       }
     ]
   }

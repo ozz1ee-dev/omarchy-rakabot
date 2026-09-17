@@ -21,12 +21,13 @@ server, it is the wrong change.
 | --- | --- | --- |
 | `bin/rakabot-watch` | polls the server and streams JSON lines on stdout |
 | `bin/rakabot-setup` | writes the server address and mints a session token |
+| `bin/rakabot-open` | opens Rakazo the way this machine already uses it |
 | `Widget.qml` | the bar entry and the panel; **also where settings live** |
 | `Avatar.qml` | one bot, drawn: shape, colour, eyes, expression, flourishes |
 
 Settings only reach a bar widget, never a service, so everything configurable is
 read in `Widget.qml` from the plugin's `shell.json` entry: `barMetric`, `ordering`,
-`groupBySection`, `maxBarAvatars`.
+`groupBySection`, `maxBarAvatars`, `openWith`.
 
 ## Running and testing
 
@@ -65,6 +66,23 @@ chasing a bug that is not there.
   wording that fits today can overflow tomorrow.
 - Anything that has to fit is `width: parent.width` plus `elide`, not a fixed
   string relying on today's font.
+
+**Opening Rakazo is a cascade, not a URL**
+
+- An Omarchy web app reports a window class built from the address it was made for
+  (`chrome-<host>__<path>-Default` for a Chrome app window), the Rakazo desktop app
+  reports `rakazo`, and a plain browser tab carries the host in its title. Matching
+  has to be word-bounded (`\brakazo\b` must not match `notrakazo.example`) and
+  class-first, or a stray tab hijacks the click.
+- An installed web app is a `webapp-*.desktop` file in
+  `~/.local/share/applications` whose `Exec` carries `--app=<address>`; that is what
+  `omarchy webapp add` and `omarchy webapp list` use. Omarchy's own
+  `omarchy-launch-or-focus-webapp` is the reference for the focus-then-launch
+  order, but it always opens an app window - the browser is *our* last resort, so
+  `bin/rakabot-open` decides and `--prefer` forces a branch.
+- Every external command in that path (`hyprctl`, `gtk-launch`, `xdg-open`,
+  `omarchy-launch-webapp`) is asserted in `tests/test_open.py` through PATH shims,
+  so the cascade is testable without a live session.
 
 **Rakazo's RPC surface is not a contract**
 

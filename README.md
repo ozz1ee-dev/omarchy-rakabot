@@ -19,8 +19,10 @@ The bar entry, on its own:
   message, how long ago it spoke and an unread badge.
 - `waiting_input` and `waiting_takeover` runs read as *waiting on you* - those are
   the bots the bar shows first, oldest wait at the top, so nobody is buried.
-- Right-click, or `Enter` on a row, brings up Rakazo: an open window if there is
-  one, otherwise the server in your browser.
+- Picking a bot opens Rakazo where you already keep it: the window you have open
+  (an Omarchy web app, the desktop app, or a browser), otherwise the web app
+  launcher you installed, otherwise the browser. It never opens a second copy of
+  a window that is already there.
 
 It only ever reads. Four procedures (`health`, `bots/list`, `botSections/list`,
 `groups/list`) and nothing else - it never sends a message, answers an ask, stops a
@@ -84,7 +86,13 @@ omarchy bar set ozz1ee.rakabot barMetric count        # avatars - count - none
 omarchy bar set ozz1ee.rakabot ordering channels      # attention - channels - flat
 omarchy bar set ozz1ee.rakabot maxBarAvatars 4        # 1-6
 omarchy bar set ozz1ee.rakabot groupBySection false   # one flat list
+omarchy bar set ozz1ee.rakabot openWith web-app       # auto - web-app - browser
 ```
+
+`openWith` decides what the click and the `Enter` key do: `auto` (default) focuses
+an open Rakazo window, else launches the web app launcher you installed, else
+opens the browser; `web-app` always opens a web app window; `browser` always opens
+the browser.
 
 `omarchy-shell ozz1ee.rakabot demo` swaps in a staged roster - fourteen invented
 bots across two sections - for screenshots and for showing the thing off. Call it
