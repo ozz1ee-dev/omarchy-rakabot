@@ -54,6 +54,18 @@ chasing a bug that is not there.
 
 ## Things that cost a day to learn
 
+**A panel is narrower than it looks**
+
+- The card is `Style.space(420)` at most, and the padding
+  (`Style.spacing.popupPadding` twice) plus the column insets leave roughly 384 px
+  for text. The key hint at the foot of the panel was one fixed 69-character
+  string: at the caption size that is ~455 px, so it ran past the card edge.
+  Measure with `TextMetrics` against the width the text actually has and step down
+  through shorter wordings before eliding - font size is a theme token, so a
+  wording that fits today can overflow tomorrow.
+- Anything that has to fit is `width: parent.width` plus `elide`, not a fixed
+  string relying on today's font.
+
 **Rakazo's RPC surface is not a contract**
 
 - The API is oRPC over `POST /rpc/<procedure>` with `{"json": {...}}` envelopes,
