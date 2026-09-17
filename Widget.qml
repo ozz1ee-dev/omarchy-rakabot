@@ -90,34 +90,37 @@ Panel {
                last_activity_ts: ago(mins), last_viewed_ts: ago(mins), focused: false, pinned: false,
                awaiting_reason: awaiting ? "Approval needed before changing your calendar." : "" }
     }
+    // The shapes are the eight Rakazo ships, and the colours are its palette, so
+    // the demo shows what a real roster can look like rather than something the
+    // app could never produce.
     var bots = [
-      bot("d1", "Chief of Staff", "Operations", "squircle", "red", "#FF263C", 0, demoNeedsHelp, 34,
+      bot("d1", "Chief of Staff", "Operations", "squircle", "red", "#EF4444", 0, demoNeedsHelp, 34,
           "Your Thursday is triple-booked. Shall I move the Vercel sync to Friday?"),
-      bot("d2", "Account Health", "Customer Success", "hex", "violet", "#9159FE", 3, false, 12,
+      bot("d2", "Account Health", "Customer Success", "hex", "violet", "#8B5CF6", 3, false, 12,
           "Northwind's ingest dropped 60% this week - worth a call before renewal."),
-      bot("d3", "Bug Reproduction", "Engineering", "gem", "orange", "#FF6700", 1, false, 5,
+      bot("d3", "Bug Reproduction", "Engineering", "wedge", "orange", "#F97316", 1, false, 5,
           "Reproduced #4812 on Firefox only. Trace and a failing test are attached."),
-      bot("d4", "Sales Outbound", "Revenue", "tablet", "green", "#00C972", 0, false, 88,
+      bot("d4", "Sales Outbound", "Revenue", "pebble", "green", "#10B981", 0, false, 88,
           "42 accounts scored overnight; 9 drafts are waiting for your voice check."),
-      bot("d5", "Expense Manager", "Finance", "capsule", "cyan", "#00BCA6", 0, false, 210,
+      bot("d5", "Expense Manager", "Finance", "tablet", "cyan", "#06B6D4", 0, false, 210,
           "August close is done. Two receipts still missing from the Berlin trip."),
-      bot("d6", "Talent Scout", "People", "leaf", "yellow", "#FF9800", 0, false, 400,
+      bot("d6", "Talent Scout", "People", "blob", "yellow", "#EAB308", 0, false, 400,
           "Shortlisted 6 for the platform role. Two have Rust plus Wayland experience."),
-      bot("d7", "Paid Media", "Growth", "shield", "blue", "#1084FE", 0, false, 1500,
+      bot("d7", "Paid Media", "Growth", "teardrop", "blue", "#3B82F6", 0, false, 1500,
           "CAC is flat at $180. I paused the two worst ad groups."),
-      bot("p1", "Trip Planner", "Personal", "cloud", "magenta", "#FF309B", 0, false, 2600,
-          "Held two flights to Lisbon for March. Neither needs paying until Friday."),
-      bot("p2", "Reading Pile", "Personal", "teardrop", "brown", "#936439", 0, false, 11000,
-          "Six saved articles this week. Two are the same paper with different headlines."),
-      bot("d8", "Release Notes", "Engineering", "pebble", "cyan", "#00BCA6", 0, false, 46,
+      bot("d8", "Release Notes", "Engineering", "cloud", "cyan", "#06B6D4", 0, false, 46,
           "0.42 is tagged. Draft covers the scrolling layout and two crash fixes."),
-      bot("d9", "Inbox Triage", "Operations", "arch", "gray", "#777777", 0, false, 150,
+      bot("d9", "Inbox Triage", "Operations", "hex", "gray", "#64748B", 0, false, 150,
           "Cleared 214 overnight. Four need you: all of them are contracts."),
-      bot("d10", "Competitor Watch", "Strategy", "crystal", "blue", "#1084FE", 0, false, 700,
+      bot("d10", "Competitor Watch", "Strategy", "wedge", "magenta", "#EC4899", 0, false, 700,
           "Two pricing pages changed this week. Both moved usage under a seat minimum."),
-      bot("p3", "Home Lab", "Personal", "dome", "green", "#00C972", 0, false, 3400,
+      bot("p1", "Trip Planner", "Personal", "cloud", "magenta", "#EC4899", 0, false, 2600,
+          "Held two flights to Lisbon for March. Neither needs paying until Friday."),
+      bot("p2", "Reading Pile", "Personal", "pebble", "brown", "#8D6E63", 0, false, 11000,
+          "Six saved articles this week. Two are the same paper with different headlines."),
+      bot("p3", "Home Lab", "Personal", "blob", "green", "#10B981", 0, false, 3400,
           "The NAS finished its scrub with no errors. Backups are four days behind."),
-      bot("p4", "Recipe Box", "Personal", "bean", "orange", "#FF6700", 0, false, 20000,
+      bot("p4", "Recipe Box", "Personal", "tablet", "orange", "#F97316", 0, false, 20000,
           "Saved the miso aubergine one. It wants an hour you have not had lately.")
     ]
     return {
