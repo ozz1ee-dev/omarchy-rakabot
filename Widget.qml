@@ -5,6 +5,13 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
+// Derived from omabot (https://github.com/njpatel/omabot), Copyright Neil Patel,
+// licensed under the Apache License, Version 2.0 - see NOTICE.
+// Changed by ozz1ee for Rakazo: the roster comes from Rakazo's RPC API instead of
+// Grok Bot's local state, the settings labels, status wording, app-opening action,
+// footer hint and demo roster differ, and the panel's key hint is measured rather
+// than fixed. The avatar shapes, faces and layout are the original's.
+//
 // Rakabot: your Rakazo roster in the Omarchy bar. bin/rakabot-watch reads the
 // server's own RPC API and streams it; this renders each bot as its own avatar -
 // the shape and colour it has in Rakazo - with an expression for its state:

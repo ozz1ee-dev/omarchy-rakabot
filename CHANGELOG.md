@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Each derived file now carries a notice of modification at the top, as section
+  4(b) of the Apache licence requires, and NOTICE lists which files are derived
+  and which are new. No behaviour change.
+
 ## 0.1.2
 
 - The keyboard hint at the foot of the panel no longer runs past the card edge.

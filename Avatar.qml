@@ -1,5 +1,11 @@
 import QtQuick
 
+// Derived from omabot (https://github.com/njpatel/omabot), Copyright Neil Patel,
+// licensed under the Apache License, Version 2.0 - see NOTICE.
+// Changed by ozz1ee: the palette and the shipped shape list are Rakazo's
+// (packages/ui-tokens, ui-web/src/bot-avatar.tsx) rather than Grok Bot's. The
+// drawing, the eye geometry and the flourishes are the original's.
+//
 // A Rakazo avatar: the bot's own shape and colour, with eyes that sit on a
 // sphere and a face that carries its state.
 //

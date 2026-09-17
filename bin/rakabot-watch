@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # rakabot-watch - follows a Rakazo server and streams its roster as JSON lines.
 #
+# The avatar cache helpers below (open_avatar_cache, cached_avatar, write_avatar)
+# are adapted from omabot's watcher (https://github.com/njpatel/omabot),
+# Copyright Neil Patel, Apache License 2.0 - see NOTICE. Everything else - the
+# RPC client, the roster mapping, the config handling - is new for Rakazo.
+#
 #   stdout  {"generated_ts":..., "app":{...}, "counts":{...}, "sections":[...], "bots":[...]}
 #   config  ~/.config/rakabot/config.json  {"url": "https://rakazo.example", "tokenFile": "..."}
 #   env     RAKABOT_URL, RAKABOT_TOKEN, RAKABOT_CONFIG override the file
