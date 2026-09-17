@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- The keyboard hint at the foot of the panel no longer runs past the card edge.
+  It is measured with `TextMetrics` against the width it actually has and steps
+  down through two shorter wordings before eliding, so it fits at every theme
+  font size. omabot's single wording overflows at this panel width.
+
 ## 0.1.1
 
 - The watcher re-reads its configuration on every pass. Running `rakabot-setup`

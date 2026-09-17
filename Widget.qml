@@ -992,13 +992,37 @@ Panel {
 
           // ---- footer
           Item {
+            id: footer
             width: parent.width
             height: Style.space(30)
+            // The hint has to fit the narrowest card the panel can be, in every
+            // theme font size, so it steps down through three wordings and only
+            // then elides. One fixed wording runs past the card edge.
+            readonly property string hintFull: "j/k move · ⏎ open app · g " + root.ordering
+                                               + " · h hide · r beside logo: " + root.barMetric
+            readonly property string hintMedium: "j/k move · ⏎ app · g " + root.ordering
+                                                 + " · h hide · r logo: " + root.barMetric
+            readonly property string hintShort: "j/k · ⏎ app · g " + root.ordering
+                                                + " · h hide · r " + root.barMetric
+            TextMetrics {
+              id: hintFullMetrics
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              text: footer.hintFull
+            }
+            TextMetrics {
+              id: hintMediumMetrics
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              text: footer.hintMedium
+            }
             Text {
               textFormat: Text.PlainText
               anchors.verticalCenter: parent.verticalCenter
-              text: "j/k move · ⏎ open app · g " + root.ordering
-                    + " · h hide · r beside logo: " + root.barMetric
+              width: parent.width
+              elide: Text.ElideRight
+              text: hintFullMetrics.advanceWidth <= width ? footer.hintFull
+                    : (hintMediumMetrics.advanceWidth <= width ? footer.hintMedium : footer.hintShort)
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
