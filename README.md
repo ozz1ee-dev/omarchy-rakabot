@@ -6,6 +6,10 @@ picture you gave it - wearing the face of whatever it wants from you.
 
 ![Rakabot in the bar and its panel](preview.png)
 
+The bar entry, on its own:
+
+![The logo mark with the bots waiting on you beside it](assets/bar.png)
+
 ## What it does
 
 - The Rakazo mark sits in the bar, dimmed when the server is not answering.

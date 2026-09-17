@@ -12,6 +12,16 @@ jobs:
       - name: watcher and setup tests
         run: python3 -B -m unittest discover -s tests -v
 
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: avatar hash parity with Rakazo
+        run: python3 scripts/check-persona-parity.py --require-node
+
   manifest:
     runs-on: ubuntu-latest
     steps:

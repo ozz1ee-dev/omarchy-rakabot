@@ -32,6 +32,7 @@ read in `Widget.qml` from the plugin's `shell.json` entry: `barMetric`, `orderin
 
 ```bash
 python3 -B -m unittest discover -s tests -v   # watcher + setup, against a fake server
+python3 scripts/check-persona-parity.py       # our avatar hash against Rakazo's own code
 qmllint Widget.qml Avatar.qml                 # CHECK THE EXIT CODE
 python3 scripts/check-manifest.py .
 omarchy plugin validate .                     # what the marketplace runs
