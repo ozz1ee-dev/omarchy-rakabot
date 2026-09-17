@@ -79,33 +79,60 @@ def focus(address):
     return False
 
 
-def exec_line(path):
+def entry_fields(path):
+    """Exec, StartupWMClass and Name out of a desktop entry."""
+    exec_line, wm_class, name = "", "", ""
     try:
-        with open(path) as handle:
+        with open(path, errors="replace") as handle:
             for line in handle:
-                if line.startswith("Exec="):
-                    return line[5:].strip()
+                if line.startswith("Exec=") and not exec_line:
+                    exec_line = line[5:].strip()
+                elif line.startswith("StartupWMClass=") and not wm_class:
+                    wm_class = line[len("StartupWMClass="):].strip()
+                elif line.startswith("Name=") and not name:
+                    name = line[5:].strip()
     except OSError:
-        return ""
-    return ""
+        pass
+    return exec_line, wm_class, name
 
 
 def web_app_for(host, directory):
-    """The web app launcher whose address is this host, as (desktop id, Exec)."""
+    """The launcher for this address, as (desktop id, Exec).
+
+    Rakazo can be installed two ways and both are launchers worth using instead of
+    a fresh browser tab:
+
+      Exec=omarchy-launch-webapp https://host   (Omarchy's Install > Web App)
+      Exec=chrome --app=https://host            (a browser shortcut, which also
+                                                 sets StartupWMClass=chrome-host__-Default)
+
+    A Chrome PWA install keeps an opaque app id instead of the address, so its
+    window class is matched - and nothing is matched on the entry's name, because
+    a launcher that merely mentions Rakazo is not necessarily one that opens it.
+    """
     if not host:
         return "", ""
     try:
         entries = sorted(name for name in os.listdir(directory) if name.endswith(".desktop"))
     except OSError:
         return "", ""
+    ranked = []
     for name in entries:
-        line = exec_line(os.path.join(directory, name))
-        if "--app=" not in line:
+        exec_line, wm_class, _ = entry_fields(os.path.join(directory, name))
+        if not exec_line:
             continue
-        address = line.split("--app=", 1)[1].split()[0].strip("'\"") if line.split("--app=", 1)[1].strip() else ""
-        if host_of(address) == host:
-            return name[:-len(".desktop")], line
-    return "", ""
+        addresses = re.findall(r"https?://[^\s\"']+", exec_line)
+        opens_it = any(host_of(address) == host for address in addresses) and (
+            "--app=" in exec_line or re.search(r"(^|[\s/])omarchy-launch-webapp\b", exec_line))
+        if opens_it:
+            ranked.append((2, name, exec_line))
+        elif wm_class and host in wm_class.lower():
+            ranked.append((1, name, exec_line))
+    if not ranked:
+        return "", ""
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    _, name, exec_line = ranked[0]
+    return name[:-len(".desktop")], exec_line
 
 
 def launch_web_app(identifier, line):

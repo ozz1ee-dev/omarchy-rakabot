@@ -161,6 +161,90 @@ class WebAppTest(OpenerHarness):
         self.assertEqual(len(self.called(calls, 'xdg-open')), 1)
 
 
+class WebAppFormTest(OpenerHarness):
+    """The three shapes a Rakazo launcher can take on an Omarchy machine."""
+
+    def entry(self, name, body):
+        (self.applications / name).write_text(textwrap.dedent(body))
+
+    def test_an_omarchy_web_app_entry_is_used(self):
+        self.entry('Rakazo.desktop', """\
+            [Desktop Entry]
+            Version=1.0
+            Name=Rakazo
+            Exec=omarchy-launch-webapp https://rakazo.tail9e18cf.ts.net
+            Type=Application
+            Icon=rakazo
+            """)
+        result, calls = self.run_opener(URL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('launched the Rakazo web app', result.stdout)
+        self.assertEqual(self.called(calls, 'gtk-launch'), ['gtk-launch Rakazo'])
+
+    def test_another_site_s_omarchy_web_app_is_ignored(self):
+        self.entry('Gmail.desktop', """\
+            [Desktop Entry]
+            Name=Gmail
+            Exec=omarchy-launch-webapp https://mail.google.com/mail/u/0/
+            Type=Application
+            """)
+        result, calls = self.run_opener(URL)
+        self.assertEqual(self.called(calls, 'gtk-launch'), [])
+        self.assertEqual(len(self.called(calls, 'xdg-open')), 1)
+
+    def test_a_browser_shortcut_is_matched_by_its_window_class(self):
+        self.entry('Rakazo app.desktop', """\
+            [Desktop Entry]
+            Name=Something else
+            Exec=google-chrome --profile-directory=Default --app-id=khgjhlppnfndncpjdcgpjbgmjpfbpcnf
+            StartupWMClass=chrome-rakazo.tail9e18cf.ts.net__-Default
+            Type=Application
+            """)
+        result, calls = self.run_opener(URL)
+        self.assertIn('launched the Rakazo web app', result.stdout)
+        self.assertEqual(self.called(calls, 'gtk-launch'), ['gtk-launch Rakazo app'])
+
+    def test_a_tui_launcher_with_an_app_id_is_ignored(self):
+        self.entry('Docker.desktop', """\
+            [Desktop Entry]
+            Name=Docker
+            Exec=xdg-terminal-exec --app-id=TUI.tile -e omarchy-launch-docker-tui
+            Type=Application
+            """)
+        result, calls = self.run_opener(URL)
+        self.assertEqual(self.called(calls, 'gtk-launch'), [])
+        self.assertEqual(len(self.called(calls, 'xdg-open')), 1)
+
+    def test_an_entry_named_after_rakazo_is_not_enough(self):
+        # A launcher that mentions Rakazo is not necessarily one that opens it.
+        self.entry('webapp-rakazo.desktop', """\
+            [Desktop Entry]
+            Name=Rakazo Tail9e18cf Ts Net
+            Exec=google-chrome --profile-directory=Default --app-id=zzzz
+            Type=Application
+            """)
+        result, calls = self.run_opener(URL)
+        self.assertEqual(self.called(calls, 'gtk-launch'), [])
+        self.assertEqual(len(self.called(calls, 'xdg-open')), 1)
+
+    def test_the_address_beats_a_window_class_match(self):
+        self.entry('Rakazo pwa.desktop', """\
+            [Desktop Entry]
+            Name=Rakazo
+            Exec=google-chrome --profile-directory=Default --app-id=zzzz
+            StartupWMClass=chrome-rakazo.tail9e18cf.ts.net__-Default
+            Type=Application
+            """)
+        self.entry('Rakazo.desktop', """\
+            [Desktop Entry]
+            Name=Rakazo
+            Exec=omarchy-launch-webapp https://rakazo.tail9e18cf.ts.net
+            Type=Application
+            """)
+        result, calls = self.run_opener(URL)
+        self.assertEqual(self.called(calls, 'gtk-launch'), ['gtk-launch Rakazo'])
+
+
 class PreferenceTest(OpenerHarness):
     def test_prefer_browser_ignores_an_open_window(self):
         self.set_clients([self.window()])

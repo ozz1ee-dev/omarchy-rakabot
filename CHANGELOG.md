@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- 0.2.0 only recognised launchers written as `Exec=chrome --app=<address>`, so a
+  Rakazo web app installed through Omarchy (`Install > Web App`, which writes
+  `Exec=omarchy-launch-webapp <address>`) was invisible to it and the browser was
+  used instead. Both forms are matched now, plus a `StartupWMClass` that names the
+  address for browser app installs. Entries are no longer matched on their name:
+  a launcher that mentions Rakazo is not necessarily one that opens it.
+
 ## 0.2.0
 
 - Picking a bot opens Rakazo where you already keep it: an open window first - an

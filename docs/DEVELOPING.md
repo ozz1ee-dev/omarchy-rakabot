@@ -74,9 +74,12 @@ chasing a bug that is not there.
   reports `rakazo`, and a plain browser tab carries the host in its title. Matching
   has to be word-bounded (`\brakazo\b` must not match `notrakazo.example`) and
   class-first, or a stray tab hijacks the click.
-- An installed web app is a `webapp-*.desktop` file in
-  `~/.local/share/applications` whose `Exec` carries `--app=<address>`; that is what
-  `omarchy webapp add` and `omarchy webapp list` use. Omarchy's own
+- An installed web app is a desktop entry in `~/.local/share/applications` that
+  opens the address as an app window. Two forms are in the wild: Omarchy's
+  `Install > Web App` writes `Exec=omarchy-launch-webapp <url>` (named after the
+  site, `Rakazo.desktop`), and a browser shortcut writes
+  `Exec=chrome --app=<url>` with `StartupWMClass=chrome-<host>__-Default`. Match
+  both on the address, never on the entry's name. Omarchy's own
   `omarchy-launch-or-focus-webapp` is the reference for the focus-then-launch
   order, but it always opens an app window - the browser is *our* last resort, so
   `bin/rakabot-open` decides and `--prefer` forces a branch.
