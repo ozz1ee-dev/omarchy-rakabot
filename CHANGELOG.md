@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Picking a bot now switches the open Rakazo window to that bot, not just raises
+  it. Rakazo keeps the open bot in its address but a running app window cannot be
+  navigated from outside, so the switch drives the app's own command palette
+  (`Ctrl+K`, the bot's name, `Enter`) - verified by the roster's unread flag going
+  from 1 to 0 as the app opened the thread. Nothing is typed unless the Rakazo
+  window is verifiably focused, and a palette left open is dismissed first.
+- New `selectBot` setting (default on) to keep the old raise-only behaviour.
+
 ## 0.2.1
 
 - 0.2.0 only recognised launchers written as `Exec=chrome --app=<address>`, so a

@@ -69,6 +69,10 @@ Panel {
     var v = String(setting("openWith", "auto"))
     return openPrefs.indexOf(v) >= 0 ? v : "auto"
   }
+  // Picking a bot also switches the open window to that bot, through Rakazo's own
+  // command palette (the app keeps the bot in its address, but a running window
+  // cannot be navigated from outside). Off means the window is only raised.
+  property bool selectBot: String(setting("selectBot", "true")) !== "false"
 
   function setting(name, fallback) {
     var s = root.settings || ({})
@@ -327,17 +331,31 @@ Panel {
     return pick
   }
 
-  // Open Rakazo where it already lives. Omarchy web apps report a window class
-  // built from the address they were made for, the desktop app reports its own,
-  // and either may be absent - bin/rakabot-open walks that list and falls back to
-  // the installed web app launcher and then to the browser, so tapping a bot
-  // never opens a second copy of a window you already have.
-  function focusApp() {
+  // Open Rakazo where it already lives, and - when a bot was picked - land on that
+  // bot. Omarchy web apps report a window class built from the address they were
+  // made for, the desktop app reports its own, and either may be absent;
+  // bin/rakabot-open walks that list and falls back to the installed web app
+  // launcher and then to the browser, so tapping a bot never opens a second copy
+  // of a window you already have.
+  function openRakazo(selectName) {
     var url = String(root.app.url || "")
-    if (url !== "")
-      Quickshell.execDetached([root.opener, "--prefer", root.openWith, url])
+    if (url !== "") {
+      var args = [root.opener, "--prefer", root.openWith]
+      if (root.selectBot && selectName) args = args.concat(["--select", String(selectName)])
+      args = args.concat([url])
+      Quickshell.execDetached(args)
+    }
     root.close()
   }
+
+  // The bot under the cursor, when the cursor is on a bot rather than a heading.
+  readonly property var cursorBot: {
+    if (cursor < 0 || cursor >= rows.length) return null
+    return rows[cursor].kind === "bot" ? rows[cursor].bot : null
+  }
+
+  // The plain "open the app" path: the mark, a right-click, or a heading.
+  function focusApp() { root.openRakazo("") }
 
   IpcHandler {
     // Omarchy instantiates a bar widget more than once (a hidden copy is used
@@ -680,7 +698,7 @@ Panel {
         if (dx < 0) root.scrub = !root.scrub
         if (dy !== 0) root.moveCursor(dy)
       }
-      onActivateRequested: root.focusApp()
+      onActivateRequested: root.openRakazo(root.cursorBot ? root.cursorBot.name : "")
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
@@ -975,7 +993,7 @@ Panel {
                     keyCatcher.pointerAt(e.x, e.y)
                   }
                   onExited: keyCatcher.pointerGone()
-                  onClicked: root.focusApp()
+                  onClicked: root.openRakazo(modelData.kind === "bot" ? modelData.bot.name : "")
                   // Hover goes to the topmost item, so a row would otherwise
                   // starve the panel-wide tracker and the eyes would freeze
                   // exactly when you are looking at them.

@@ -22,7 +22,8 @@ The bar entry, on its own:
 - Picking a bot opens Rakazo where you already keep it: the window you have open
   (an Omarchy web app, the desktop app, or a browser), otherwise the web app
   launcher you installed, otherwise the browser. It never opens a second copy of
-  a window that is already there.
+  a window that is already there - and when the window is already open, it also
+  switches it to the bot you picked, through Rakazo's own command palette.
 
 It only ever reads. Four procedures (`health`, `bots/list`, `botSections/list`,
 `groups/list`) and nothing else - it never sends a message, answers an ask, stops a
@@ -47,8 +48,9 @@ typed at the prompt, never stored, never passed as an argument:
 Already have a token? `--token <token>`, or set `RAKABOT_TOKEN`. To prove a server
 answers without writing anything, add `--check`.
 
-Requirements: `python3` and a Rakazo server you can reach (the plugin talks to it
-over whatever network you already use, Tailscale included).
+Requirements: `python3`, `wtype` (for switching the open window to a picked bot)
+and a Rakazo server you can reach (the plugin talks to it over whatever network you
+already use, Tailscale included).
 
 Remove with `omarchy plugin remove ozz1ee.rakabot`. It leaves behind
 `~/.config/rakabot/` (your address and token) and
@@ -87,12 +89,20 @@ omarchy bar set ozz1ee.rakabot ordering channels      # attention - channels - f
 omarchy bar set ozz1ee.rakabot maxBarAvatars 4        # 1-6
 omarchy bar set ozz1ee.rakabot groupBySection false   # one flat list
 omarchy bar set ozz1ee.rakabot openWith web-app       # auto - web-app - browser
+omarchy bar set ozz1ee.rakabot selectBot false       # raise only, do not switch
 ```
 
 `openWith` decides what the click and the `Enter` key do: `auto` (default) focuses
 an open Rakazo window, else launches the web app launcher you installed, else
 opens the browser; `web-app` always opens a web app window; `browser` always opens
 the browser.
+
+`selectBot` (default on) makes picking a bot switch the open window to that bot.
+Rakazo keeps the open bot in its address, but a running window cannot be navigated
+from outside, so the switch goes through the app's own command palette (`Ctrl+K`,
+the bot's name, `Enter`). It needs `wtype` and Hyprland, and nothing is typed
+unless the Rakazo window is verifiably the focused one. Switch it off to only
+raise the window.
 
 `omarchy-shell ozz1ee.rakabot demo` swaps in a staged roster - fourteen invented
 bots across two sections - for screenshots and for showing the thing off. Call it

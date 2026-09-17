@@ -84,8 +84,29 @@ chasing a bug that is not there.
   order, but it always opens an app window - the browser is *our* last resort, so
   `bin/rakabot-open` decides and `--prefer` forces a branch.
 - Every external command in that path (`hyprctl`, `gtk-launch`, `xdg-open`,
-  `omarchy-launch-webapp`) is asserted in `tests/test_open.py` through PATH shims,
-  so the cascade is testable without a live session.
+  `omarchy-launch-webapp`, `wtype`) is asserted in `tests/test_open.py` through
+  PATH shims, so the cascade is testable without a live session.
+- **Keep that harness hermetic: `PATH` holds the shim directory and nothing else.**
+  With the real `/usr/bin` behind the shims, a test for "the tool is missing"
+  quietly reaches the real binary - and a `wtype` fall-through types into whatever
+  window the developer has focused. The shims themselves use bash builtins only
+  (`${0##*/}`, `$(<file)`) so they do not need `/usr/bin` either.
+
+**Switching the open window to a bot**
+
+- Rakazo has real deep links - `/app/<botId>`, `/app/g/<groupId>`, and `?m=` /
+  `?routine=` for a message or a routine - so a bot can be addressed, but a
+  *running* app window cannot be navigated from outside: Chrome opens a new app
+  window per `--app=<url>` (reproduced: relaunching the same address made a second
+  window), and Ctrl+L does not raise an omnibox in app mode.
+- The way in is the app's own command palette: `Ctrl+K`, type the bot's name, and
+  `Enter` selects the highlighted result. Verified end to end by the roster's own
+  unread flag going from 1 to 0, which is the app marking the thread it opened.
+- Two guards, both tested: `Escape` first (a palette the user left open would be
+  closed by our Ctrl+K and the name would then land somewhere else), and nothing is
+  typed at all unless `hyprctl activewindow` says the Rakazo window we are about to
+  drive is the focused one. Without that check a stray `Enter` could send a message.
+- The name has to be unique enough to rank first in the palette - names are not ids.
 
 **Rakazo's RPC surface is not a contract**
 

@@ -18,10 +18,24 @@ URL = 'https://rakazo.tail9e18cf.ts.net'
 CHROME_CLASS = 'chrome-rakazo.tail9e18cf.ts.net__-Default'
 
 SHIM = """#!/bin/bash
-printf '%s' "$(basename "$0")" >> "$RAKABOT_TEST_LOG"
+printf '%s' "${0##*/}" >> "$RAKABOT_TEST_LOG"
 for argument in "$@"; do printf ' %s' "$argument" >> "$RAKABOT_TEST_LOG"; done
 printf '\\n' >> "$RAKABOT_TEST_LOG"
 {extra}
+exit 0
+"""
+
+# A recording stub for hyprctl: it answers `clients -j` and `activewindow -j` from
+# files the test writes, and swallows dispatches. Pure bash builtins, so PATH can
+# hold nothing but these shims and no real tool can be reached by accident.
+HYPRCTL_SHIM = """#!/bin/bash
+printf '%s' "${0##*/}" >> "$RAKABOT_TEST_LOG"
+for argument in "$@"; do printf ' %s' "$argument" >> "$RAKABOT_TEST_LOG"; done
+printf '\\n' >> "$RAKABOT_TEST_LOG"
+case "$1" in
+  clients) printf '%s' "$(<"$RAKABOT_TEST_CLIENTS")" ;;
+  activewindow) printf '%s' "$(<"$RAKABOT_TEST_ACTIVE")" ;;
+esac
 exit 0
 """
 
@@ -35,20 +49,27 @@ class OpenerHarness(unittest.TestCase):
         self.bin.mkdir()
         self.log = self.home / 'calls.log'
         self.clients = self.home / 'clients.json'
+        self.active = self.home / 'active.json'
         self.applications = self.home / '.local/share/applications'
         self.applications.mkdir(parents=True)
-        self.write_shim('hyprctl', extra='cat "$RAKABOT_TEST_CLIENTS"')
-        for name in ('gtk-launch', 'xdg-open', 'omarchy-launch-webapp', 'omarchy-launch-browser'):
+        self.write_shim('hyprctl', body=HYPRCTL_SHIM)
+        for name in ('gtk-launch', 'xdg-open', 'omarchy-launch-webapp', 'omarchy-launch-browser', 'wtype'):
             self.write_shim(name)
         self.set_clients([])
+        self.set_active('')
 
-    def write_shim(self, name, extra=''):
+    def write_shim(self, name, extra='', body=None):
         path = self.bin / name
-        path.write_text(SHIM.format(extra=extra))
+        # str.replace, not str.format: the shim body contains ${0##*/} and a
+        # format call would read it as a field.
+        path.write_text(body if body else SHIM.replace('{extra}', extra))
         path.chmod(0o755)
 
     def set_clients(self, clients):
         self.clients.write_text(json.dumps(clients))
+
+    def set_active(self, address):
+        self.active.write_text(json.dumps({'address': address, 'class': 'whatever'}))
 
     def window(self, **overrides):
         window = {'address': '0xabc', 'class': CHROME_CLASS, 'initialClass': CHROME_CLASS,
@@ -68,11 +89,14 @@ class OpenerHarness(unittest.TestCase):
     def run_opener(self, *arguments):
         environment = dict(os.environ)
         environment.update({
-            'PATH': '%s:%s' % (self.bin, os.environ.get('PATH', '')),
+            # Only the shims: nothing in this harness may reach a real tool, or a
+            # "missing binary" test would quietly type into the live session.
+            'PATH': str(self.bin),
             'HOME': str(self.home),
             'RAKABOT_APPLICATIONS': str(self.applications),
             'RAKABOT_TEST_LOG': str(self.log),
             'RAKABOT_TEST_CLIENTS': str(self.clients),
+            'RAKABOT_TEST_ACTIVE': str(self.active),
         })
         result = subprocess.run([sys.executable, '-B', str(OPENER), *arguments],
                                 capture_output=True, text=True, timeout=30, env=environment, check=False)
@@ -267,6 +291,62 @@ class PreferenceTest(OpenerHarness):
         result, calls = self.run_opener('--prefer', 'web-app', URL)
         self.assertEqual(self.called(calls, 'gtk-launch'), ['gtk-launch webapp-rakazo'])
         self.assertEqual(self.called(calls, 'omarchy-launch-webapp'), [])
+
+
+class SelectTest(OpenerHarness):
+    """Picking a bot switches the open window through Rakazo's own palette."""
+
+    def test_the_palette_is_driven_in_the_right_order(self):
+        self.set_clients([self.window()])
+        self.set_active('0xabc')
+        result, calls = self.run_opener('--select', 'Web', URL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('switched to Web', result.stdout)
+        self.assertEqual(self.called(calls, 'wtype'), [
+            'wtype -k Escape',
+            'wtype -M ctrl -k k -m ctrl',
+            'wtype -d 60 Web',
+            'wtype -k Return',
+        ])
+
+    def test_nothing_is_typed_when_our_window_is_not_the_focused_one(self):
+        # The guard that matters: keystrokes must never land in whatever is in
+        # front, where a stray Enter could send a message.
+        self.set_clients([self.window()])
+        self.set_active('0xsomeone-else')
+        result, calls = self.run_opener('--select', 'Web', URL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.called(calls, 'wtype'), [])
+        self.assertIn('could not switch to Web', result.stdout)
+
+    def test_nothing_is_typed_when_there_is_no_window_to_switch(self):
+        self.web_app()
+        result, calls = self.run_opener('--select', 'Web', URL)
+        self.assertEqual(self.called(calls, 'wtype'), [])
+        self.assertIn('launched the Rakazo web app', result.stdout)
+
+    def test_nothing_is_typed_when_the_browser_is_forced(self):
+        self.set_clients([self.window()])
+        self.set_active('0xabc')
+        result, calls = self.run_opener('--prefer', 'browser', '--select', 'Web', URL)
+        self.assertEqual(self.called(calls, 'wtype'), [])
+        self.assertIn('in the browser', result.stdout)
+
+    def test_a_missing_wtype_is_not_a_crash(self):
+        (self.bin / 'wtype').unlink()
+        self.set_clients([self.window()])
+        self.set_active('0xabc')
+        result, _ = self.run_opener('--select', 'Web', URL)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('could not switch to Web', result.stdout)
+
+    def test_a_window_class_match_alone_still_allows_selecting(self):
+        self.set_clients([self.window(**{'class': 'google-chrome', 'initialClass': 'google-chrome',
+                                         'title': 'Rakazo - Google Chrome'})])
+        self.set_active('0xabc')
+        result, calls = self.run_opener('--select', 'Chief', URL)
+        self.assertIn('switched to Chief', result.stdout)
+        self.assertEqual(len(self.called(calls, 'wtype')), 4)
 
 
 class ArgumentTest(OpenerHarness):

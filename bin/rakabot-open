@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
-# rakabot-open - open Rakazo the way this machine already uses it.
+# rakabot-open - open Rakazo the way this machine already uses it, and, when
+# asked, switch the window that is already open to one bot.
 #
-#   rakabot-open [--prefer auto|web-app|browser] [--pattern P]... <url>
+#   rakabot-open [--prefer auto|web-app|browser] [--select NAME] [--pattern P]... <url>
 #
 # auto (the default) tries three things in order:
 #   1. focus a window that is already showing the server - an Omarchy web app
 #      (Chrome app windows report a class like chrome-<host>-...), the Rakazo
 #      desktop app, or a browser window titled after it
 #   2. otherwise launch the installed web app launcher for that address, if there
-#      is one (~/.local/share/applications/webapp-*.desktop)
+#      is one (~/.local/share/applications/*.desktop)
 #   3. otherwise open the address in the default browser
 #
 # --prefer browser jumps straight to 3. --prefer web-app skips 3 and opens a web
 # app window even when no launcher is installed.
+#
+# --select NAME additionally switches the window that was focused to that bot,
+# through the app's own command palette (Ctrl+K, type the name, Enter). Rakazo
+# keeps the open bot in its address (/app/<botId>) but a running app window cannot
+# be navigated from outside, so the palette is the way in. The keystrokes are only
+# sent when the server's own window is verifiably focused - never into whatever
+# happens to be in front.
 #
 # Prints one line saying what it did, so a log tells the whole story.
 import json
@@ -22,10 +30,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import urllib.parse
 
 APPLICATIONS = "~/.local/share/applications"
 DESKTOP_APP_CLASSES = ("rakazo", "rakazo-desktop")
+KEYSTROKE_GAP = 0.25
 
 
 def applications_dir():
@@ -94,6 +104,50 @@ def entry_fields(path):
     except OSError:
         pass
     return exec_line, wm_class, name
+
+
+def active_window():
+    """The address of the focused window, or "" when it cannot be read."""
+    if not shutil.which("hyprctl"):
+        return ""
+    try:
+        result = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=10)
+        return str(json.loads(result.stdout or "{}").get("address") or "")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ""
+
+
+def type_keys(*arguments):
+    if not shutil.which("wtype"):
+        return False
+    try:
+        return subprocess.run(["wtype", *arguments], capture_output=True, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def select_bot(address, name):
+    """Switch the focused Rakazo window to a bot through its command palette.
+
+    Rakazo's own palette hotkey is Ctrl+K and the search field filters the roster,
+    so the name has to be unique enough to rank first. Escape first: a palette the
+    user left open would otherwise be closed by our Ctrl+K and the name would land
+    in whatever has focus - which is why nothing is typed unless the window we are
+    about to drive is verifiably the focused one.
+    """
+    if not name or not address:
+        return False
+    if active_window() != address:
+        return False
+    if not type_keys("-k", "Escape"):
+        return False
+    time.sleep(KEYSTROKE_GAP)
+    type_keys("-M", "ctrl", "-k", "k", "-m", "ctrl")
+    time.sleep(KEYSTROKE_GAP)
+    type_keys("-d", "60", name)
+    time.sleep(KEYSTROKE_GAP)
+    type_keys("-k", "Return")
+    return True
 
 
 def web_app_for(host, directory):
@@ -174,17 +228,19 @@ def open_in_browser(url):
 
 
 def parse_arguments(arguments):
-    options = {"url": "", "prefer": "auto", "patterns": []}
+    options = {"url": "", "prefer": "auto", "patterns": [], "select": ""}
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in ("--prefer", "--pattern"):
+        if argument in ("--prefer", "--pattern", "--select"):
             if index + 1 >= len(arguments):
                 raise ValueError("%s needs a value" % argument)
             if argument == "--prefer":
                 if arguments[index + 1] not in ("auto", "web-app", "browser"):
                     raise ValueError("--prefer takes auto, web-app or browser")
                 options["prefer"] = arguments[index + 1]
+            elif argument == "--select":
+                options["select"] = arguments[index + 1]
             else:
                 options["patterns"].append(arguments[index + 1])
             index += 2
@@ -223,7 +279,15 @@ def main():
     if options["prefer"] == "auto":
         address = find_window(windows(), patterns)
         if address and focus(address):
-            print("focused the open Rakazo window (%s)" % address)
+            if options["select"]:
+                if select_bot(address, options["select"]):
+                    print("focused the open Rakazo window (%s) and switched to %s"
+                          % (address, options["select"]))
+                else:
+                    print("focused the open Rakazo window (%s); could not switch to %s"
+                          % (address, options["select"]))
+            else:
+                print("focused the open Rakazo window (%s)" % address)
             return 0
 
         identifier, line = web_app_for(host, directory)
