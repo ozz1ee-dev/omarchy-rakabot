@@ -114,6 +114,28 @@ chasing a bug that is not there.
   about to drive is the focused one. Without that check a stray `Enter` could send
   a message, which is why the index path - no text, no `Enter` - is the default.
 
+**Notifications: ours, not Chrome's**
+
+- The notifications the Rakazo page raises arrive through Chrome with
+  `app: "Google Chrome"` and Chrome's logo in `appIcon` (read the entry back from
+  `~/.local/state/omarchy/notifications/history/*.json` rather than guessing), and
+  nothing outside Chrome can restyle them - the site's own favicon is not used.
+  Hence `omarchy-notification-send` from the watcher, which is what makes the mark
+  and the click action possible.
+- `--image`/`-i` wins over the app icon in the notification card, and an absolute
+  path is accepted, so the mark can be the file in `assets/`.
+- `--exec` consumes the rest of the argv as the click command, which is how the
+  notification opens that bot through `rakabot-open --select-index N --select NAME`.
+- Only transitions are announced, and the first pass of a run records the world
+  instead of describing it - otherwise the first look after a long sleep would
+  replay every unread bot. State lives in `~/.local/state/omarchy/rakabot/notify.json`
+  (not in the plugin directory, so an update cannot resurrect old events).
+- **Two watchers run** (Omarchy instantiates a bar widget twice, one copy measures).
+  `flock` on `notify.lock` picks the one that announces, and the state file makes
+  the announcement idempotent for the other.
+- `rakabot-watch` defaults to `--notify off`: a watcher started by hand, or by a
+  test, must never post into the live session.
+
 **Rakazo's RPC surface is not a contract**
 
 - The API is oRPC over `POST /rpc/<procedure>` with `{"json": {...}}` envelopes,

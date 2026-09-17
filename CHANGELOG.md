@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0
+
+- Rakabot sends its own notifications: a bot that writes or starts waiting for you
+  raises one, named `Rakabot`, wearing the plugin's mark as the icon, and clicking
+  it opens (or switches to) that bot. The Rakazo page's own notifications come
+  through Chrome - `app` and icon are Chrome's, and nothing outside Chrome can
+  change that, which is why the only way to have ours was to send them ourselves.
+- Only transitions are announced, never the world as it already stood, so starting
+  the bar does not replay what was already unread; muted bots stay silent; and two
+  watchers (Omarchy instantiates a bar widget twice) announce an event once.
+- New `notifyOnMessage` setting (default on); off still records what was seen, so
+  turning it back on does not replay.
+
 ## 0.3.1
 
 - The switch now goes through the palette's own `Ctrl+<n>` shortcut by roster

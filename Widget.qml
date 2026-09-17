@@ -73,6 +73,12 @@ Panel {
   // command palette (the app keeps the bot in its address, but a running window
   // cannot be navigated from outside). Off means the window is only raised.
   property bool selectBot: String(setting("selectBot", "true")) !== "false"
+  // Notifications when a bot writes or starts waiting for you. These are ours: the
+  // ones the Rakazo page raises through Chrome arrive named and drawn as Chrome,
+  // and nothing outside Chrome can change that, so the only way to have a Rakabot
+  // notification (our icon, and a click that opens that bot) is to send it here.
+  // Turn Chrome's off for the site to avoid hearing about everything twice.
+  property bool notifyOnMessage: String(setting("notifyOnMessage", "true")) !== "false"
 
   function setting(name, fallback) {
     var s = root.settings || ({})
@@ -247,7 +253,7 @@ Panel {
   // ---------------------------------------------------------------- watcher
   Process {
     id: watcherProc
-    command: [root.watcher, "--interval", "2"]
+    command: [root.watcher, "--interval", "2", "--notify", root.notifyOnMessage ? "on" : "off"]
     running: true
     stdout: SplitParser { onRead: function(data) { root.parseState(data) } }
     stderr: SplitParser {

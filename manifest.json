@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ozz1ee.rakabot",
   "name": "Rakabot",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "author": "ozz1ee",
   "license": "Apache-2.0",
   "description": "Your Rakazo roster in the bar: every bot drawn as its own avatar, with an expression for its state and one keypress to the server.",
@@ -29,7 +29,9 @@
       "groupBySection": "true",
       "maxBarAvatars": 3,
       "openWith": "auto",
-      "ordering": "attention"
+      "ordering": "attention",
+      "notifyOnMessage": "true",
+      "selectBot": "true"
     },
     "schema": [
       {
@@ -71,6 +73,13 @@
         "max": 6,
         "step": 1,
         "defaultValue": 3
+      },
+      {
+        "key": "notifyOnMessage",
+        "type": "boolean",
+        "label": "Notify when a bot writes or waits for you",
+        "defaultValue": true,
+        "description": "Rakabot sends its own desktop notifications, with the Rakabot mark as the icon and a click that opens that bot. The Rakazo page in Chrome sends its own too - turn those off for the site to avoid hearing about everything twice. Muted bots are never announced."
       },
       {
         "key": "selectBot",

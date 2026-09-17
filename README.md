@@ -19,6 +19,10 @@ The bar entry, on its own:
   message, how long ago it spoke and an unread badge.
 - `waiting_input` and `waiting_takeover` runs read as *waiting on you* - those are
   the bots the bar shows first, oldest wait at the top, so nobody is buried.
+- A notification when a bot writes to you or starts waiting for you - sent by the
+  plugin, with the Rakabot mark as its icon and a click that opens that bot (the
+  ones the Rakazo page raises through Chrome arrive named and drawn as Chrome, and
+  nothing outside Chrome can restyle them).
 - Picking a bot opens Rakazo where you already keep it: the window you have open
   (an Omarchy web app, the desktop app, or a browser), otherwise the web app
   launcher you installed, otherwise the browser. It never opens a second copy of
@@ -48,8 +52,9 @@ typed at the prompt, never stored, never passed as an argument:
 Already have a token? `--token <token>`, or set `RAKABOT_TOKEN`. To prove a server
 answers without writing anything, add `--check`.
 
-Requirements: `python3`, `wtype` (for switching the open window to a picked bot)
-and a Rakazo server you can reach (the plugin talks to it over whatever network you
+Requirements: `python3`, `wtype` (for switching the open window to a picked bot),
+`omarchy-notification-send` or `notify-send` (for notifications; only the former
+carries the click action) and a Rakazo server you can reach (the plugin talks to it over whatever network you
 already use, Tailscale included).
 
 Remove with `omarchy plugin remove ozz1ee.rakabot`. It leaves behind
@@ -96,6 +101,12 @@ omarchy bar set ozz1ee.rakabot selectBot false       # raise only, do not switch
 an open Rakazo window, else launches the web app launcher you installed, else
 opens the browser; `web-app` always opens a web app window; `browser` always opens
 the browser.
+
+`notifyOnMessage` (default on) sends a notification when a bot writes or starts
+waiting for your input. Muted bots in Rakazo are never announced. If you also let
+the Rakazo page notify you through Chrome you will hear about everything twice -
+remove the site's permission in Chrome (`chrome://settings/content/notifications`)
+to leave the notifications to the plugin.
 
 `selectBot` (default on) makes picking a bot switch the open window to that bot.
 Rakazo keeps the open bot in its address, but a running window cannot be navigated
