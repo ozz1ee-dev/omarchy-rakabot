@@ -520,6 +520,33 @@ class CommandLineTest(WatcherHarness):
         self.assertFalse(state['app']['running'])
         self.assertEqual(state['bots'], [])
 
+    def test_a_configuration_written_while_watching_is_picked_up(self):
+        # The bar is already up when `rakabot-setup` runs, so a watcher that only
+        # read its configuration at startup would leave the widget reporting "no
+        # server configured" until the shell was restarted.
+        config_file = self.home / 'config.json'
+        token_file = self.home / 'token'
+        environment = dict(os.environ, RAKABOT_CONFIG=str(config_file))
+        environment.pop('RAKABOT_TOKEN', None)
+        process = subprocess.Popen([sys.executable, '-B', str(WATCHER), '--interval', '1'],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   env=environment)
+        try:
+            first = json.loads(process.stdout.readline())
+            self.assertFalse(first['app']['running'], 'nothing is configured yet')
+            self.assertIn('no server configured', first['app']['error'])
+
+            self.server.bots = [bot(name='Chief')]
+            token_file.write_text('tok-123')
+            config_file.write_text(json.dumps({'url': self.server.url, 'tokenFile': str(token_file)}))
+
+            second = json.loads(process.stdout.readline())
+            self.assertTrue(second['app']['running'], 'the new configuration was not picked up')
+            self.assertEqual(second['counts']['bots'], 1)
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+
     def test_the_stream_emits_again_when_the_roster_changes(self):
         self.config()
         self.server.bots = [bot()]

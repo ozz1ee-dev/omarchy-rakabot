@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- The watcher re-reads its configuration on every pass. Running `rakabot-setup`
+  after the bar is already up no longer needs a shell restart before the widget
+  starts reading - it used to sit on "no server configured" until one.
+
 ## 0.1.0
 
 - First release: your Rakazo roster in the Omarchy bar, read from the server's own

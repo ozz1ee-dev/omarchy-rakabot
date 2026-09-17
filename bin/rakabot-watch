@@ -463,22 +463,28 @@ def signature_of(state):
 
 def main():
     arguments = sys.argv[1:]
-    config = load_config()
-    interval = 5.0
+    fixed_interval = None
     if "--interval" in arguments:
         try:
-            interval = max(0.5, float(arguments[arguments.index("--interval") + 1]))
+            fixed_interval = max(0.5, float(arguments[arguments.index("--interval") + 1]))
         except (IndexError, ValueError):
-            pass
-    elif config.get("interval"):
-        try:
-            interval = max(0.5, float(config["interval"]))
-        except (TypeError, ValueError):
-            pass
+            fixed_interval = None
     once = "--once" in arguments
 
     last_signature, last_emit = None, 0.0
     while True:
+        # Re-read on every pass, not once at startup: `rakabot-setup` is normally
+        # run after the bar is already up, and a watcher that only ever saw its
+        # first (empty) configuration would sit there reporting no server until
+        # the shell was restarted. The file is small and this runs every few
+        # seconds at most.
+        config = load_config()
+        interval = fixed_interval
+        if interval is None:
+            try:
+                interval = max(0.5, float(config.get("interval") or 5.0))
+            except (TypeError, ValueError):
+                interval = 5.0
         try:
             state = snapshot(config)
         except Exception as error:  # never take the widget down with us
