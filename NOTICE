@@ -1,0 +1,12 @@
+Rakabot
+Copyright 2026 ozz1ee
+
+This product includes software developed as part of omabot
+(https://github.com/njpatel/omabot), Copyright Neil Patel, licensed under the
+Apache License, Version 2.0.
+
+Widget.qml and Avatar.qml are derived from that project. The visual design, the
+avatar rendering (shapes, colour handling, eyes, expressions, entrance and
+gesture flourishes) and the bar/panel layout are theirs; the data layer here is
+new, reading Rakazo's HTTP API instead of Grok Bot's local state directory, and
+the settings, tests, setup tool and documentation have been rewritten for Rakazo.

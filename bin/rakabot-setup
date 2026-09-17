@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+# rakabot-setup - point the plugin at a Rakazo server and store a session token.
+#
+#   rakabot-setup --url https://rakazo.example
+#   rakabot-setup --url https://rakazo.example --token <token>
+#   rakabot-setup --url https://rakazo.example --check
+#
+# With no --token this signs in over Rakazo's own Better Auth endpoint, asking
+# for the password on the terminal. The password is never passed as an argument,
+# never written to disk and never printed. What lands on disk is the session
+# token, in a 0600 file, plus the server address in config.json.
+#
+# The token is a Rakazo session: revoke it by signing that session out, and treat
+# it like any other credential on this machine.
+import getpass
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+CONFIG_DIR = "~/.config/rakabot"
+UNSAFE_URL = ("http://", "https://")
+
+
+def config_path():
+    return os.path.expanduser(os.environ.get("RAKABOT_CONFIG") or os.path.join(CONFIG_DIR, "config.json"))
+
+
+def token_path():
+    return os.path.expanduser(os.path.join(CONFIG_DIR, "token"))
+
+
+def fail(message):
+    sys.stderr.write("rakabot-setup: %s\n" % message)
+    return 1
+
+
+def post(url, payload, headers=None, timeout=20):
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=body, method="POST")
+    request.add_header("content-type", "application/json")
+    for name, value in (headers or {}).items():
+        request.add_header(name, value)
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
+def read_token(response, body):
+    for header in ("set-auth-token", "x-auth-token"):
+        token = response.headers.get(header)
+        if token:
+            return token.strip()
+    try:
+        parsed = json.loads(body or "{}")
+    except ValueError:
+        parsed = {}
+    if isinstance(parsed, dict) and isinstance(parsed.get("token"), str):
+        return parsed["token"].strip()
+    cookies = response.headers.get("set-cookie") or ""
+    for part in cookies.split(";"):
+        name, _, value = part.strip().partition("=")
+        if name in ("better-auth.session_token", "__Secure-better-auth.session_token") and value:
+            return urllib.parse.unquote(value)
+    return ""
+
+
+def sign_in(base_url, email, password):
+    try:
+        response = post(base_url + "/api/auth/sign-in/email", {"email": email, "password": password})
+    except urllib.error.HTTPError as error:
+        detail = error.read(4096).decode("utf-8", "replace")
+        try:
+            message = json.loads(detail).get("message") or detail
+        except ValueError:
+            message = detail
+        return "", "sign-in failed: HTTP %s %s" % (error.code, str(message).strip()[:200])
+    except urllib.error.URLError as error:
+        return "", "cannot reach %s (%s)" % (base_url, error.reason)
+    body = response.read(65536).decode("utf-8", "replace")
+    token = read_token(response, body)
+    if not token:
+        return "", "signed in, but the reply carried no session token (is the bearer plugin enabled?)"
+    return token, ""
+
+
+def probe(base_url, token):
+    """One read against the API, so a bad token is caught here, not in the bar."""
+    try:
+        response = post(base_url + "/rpc/bots/list", {"json": {}},
+                        {"authorization": "Bearer " + token}, timeout=15)
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            return None, "the token was rejected (401)"
+        return None, "the server answered HTTP %s" % error.code
+    except urllib.error.URLError as error:
+        return None, "cannot reach %s (%s)" % (base_url, error.reason)
+    try:
+        payload = json.loads(response.read(4 * 1024 * 1024).decode("utf-8", "replace"))
+    except ValueError:
+        return None, "the server answered with something that is not JSON"
+    bots = (payload or {}).get("json")
+    if not isinstance(bots, list):
+        return None, "the server did not return a bot list"
+    return bots, ""
+
+
+def write_credentials(base_url, token):
+    directory = os.path.dirname(config_path())
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    path = token_path()
+    # Create with the mode already set, so the token is never briefly readable.
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(handle, "w") as stream:
+        stream.write(token + "\n")
+    os.chmod(path, 0o600)
+    config = {"url": base_url, "tokenFile": path, "interval": 5}
+    with open(config_path(), "w") as stream:
+        json.dump(config, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    return path
+
+
+def parse_arguments(arguments):
+    options = {"url": "", "token": os.environ.get("RAKABOT_TOKEN", ""), "email": "", "check": False}
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--check":
+            options["check"] = True
+            index += 1
+            continue
+        if argument in ("--url", "--token", "--email"):
+            if index + 1 >= len(arguments):
+                raise ValueError("%s needs a value" % argument)
+            options[argument[2:]] = arguments[index + 1]
+            index += 2
+            continue
+        raise ValueError("unknown argument %s" % argument)
+    if not options["url"]:
+        raise ValueError("--url is required (for example https://rakazo.example)")
+    options["url"] = options["url"].rstrip("/")
+    if not options["url"].startswith(UNSAFE_URL):
+        raise ValueError("--url must start with http:// or https://")
+    return options
+
+
+def main():
+    try:
+        options = parse_arguments(sys.argv[1:])
+    except ValueError as error:
+        return fail("%s\nusage: rakabot-setup --url <server> [--token <token>] [--email <email>] [--check]"
+                    % error)
+
+    base_url, token = options["url"], options["token"]
+    if not token:
+        email = options["email"]
+        try:
+            if not email:
+                email = input("Rakazo email: ").strip()
+            if not email:
+                return fail("an email is needed to sign in")
+            password = getpass.getpass("Rakazo password (not stored): ")
+        except (EOFError, KeyboardInterrupt):
+            return fail("cancelled - no terminal to read the password from")
+        if not password:
+            return fail("no password given")
+        token, error = sign_in(base_url, email, password)
+        del password
+        if error:
+            return fail(error)
+        print("signed in as %s" % email)
+
+    if not options["check"]:
+        path = write_credentials(base_url, token)
+        print("wrote %s and %s" % (config_path(), path))
+    bots, error = probe(base_url, token)
+    if error:
+        return fail(error)
+    print("%s answered: %d bot%s in the roster"
+          % (base_url, len(bots), "" if len(bots) == 1 else "s"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,1008 @@
+import QtQuick
+import QtQuick.Controls
+import Quickshell
+import Quickshell.Io
+import qs.Commons
+import qs.Ui
+
+// Rakabot: your Rakazo roster in the Omarchy bar. bin/rakabot-watch reads the
+// server's own RPC API and streams it; this renders each bot as its own avatar -
+// the shape and colour it has in Rakazo - with an expression for its state:
+// alert when it is waiting on you, glancing when it has unread messages,
+// asleep when muted. Keys: j/k move · Enter focus the app · h redact ·
+// r cycle the bar text · g group by channel · Esc close.
+
+Panel {
+  id: root
+  moduleName: "ozz1ee.rakabot"
+  ipcTarget: "ozz1ee.rakabot"
+  manageIpc: false
+
+  // ---------------------------------------------------------------- settings
+  // The logo is always in the bar. This is only what sits beside it:
+  // the bots that want you, drawn as themselves; how many there are; or nothing.
+  property string barMetric: {
+    var v = String(setting("barMetric", "avatars"))
+    return barMetrics.indexOf(v) >= 0 ? v : (v === "count" ? "count" : "avatars")
+  }
+  readonly property var barMetrics: ["avatars", "count", "none"]
+  // persist=false changes it for this session only. Writing the bar entry
+  // reloads the widget, which would throw away anything held in memory - the
+  // demo roster included - so a scripted walk through the states asks for it.
+  function cycleBarMetric(persist) {
+    barMetric = barMetrics[(barMetrics.indexOf(barMetric) + 1) % barMetrics.length]
+    if (persist !== false)
+      Quickshell.execDetached(["omarchy", "bar", "set", "ozz1ee.rakabot", "barMetric", barMetric])
+  }
+
+  // attention: whoever wants you first (oldest wait first, so nobody is
+  // buried), a rule, then everyone else by recency. channels: the sidebar
+  // sections you set up in Rakazo. flat: purely by recency.
+  property string ordering: String(setting("ordering", "attention"))
+  readonly property var orderings: ["attention", "channels", "flat"]
+  function cycleOrdering() {
+    ordering = orderings[(orderings.indexOf(ordering) + 1) % orderings.length]
+    Quickshell.execDetached(["omarchy", "bar", "set", "ozz1ee.rakabot", "ordering", ordering])
+    cursor = 0
+  }
+  property bool groupBySection: String(setting("groupBySection", "true")) !== "false"
+  function toggleGrouping() {
+    groupBySection = !groupBySection
+    Quickshell.execDetached(["omarchy", "bar", "set", "ozz1ee.rakabot", "groupBySection", groupBySection ? "true" : "false"])
+  }
+
+  readonly property int maxBarAvatars: Math.max(1, Math.min(6, Number(setting("maxBarAvatars", 3))))
+  readonly property string watcher: Qt.resolvedUrl("bin/rakabot-watch").toString().replace(/^file:\/\//, "")
+
+  function setting(name, fallback) {
+    var s = root.settings || ({})
+    return s[name] !== undefined && s[name] !== null ? s[name] : fallback
+  }
+
+  // ---------------------------------------------------------------- theme
+  readonly property color fg: bar ? bar.foreground : Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color accent: Color.accent
+  readonly property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.45)
+  readonly property color faint: Qt.rgba(fg.r, fg.g, fg.b, 0.20)
+  readonly property color divider: Qt.rgba(fg.r, fg.g, fg.b, 0.34)
+  readonly property color hilite: Qt.rgba(fg.r, fg.g, fg.b, 0.09)
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property color eyeInk: Color.background
+
+  // ---------------------------------------------------------------- state
+  property var liveSnap: null
+  readonly property var snap: demoMode ? demoSnap : liveSnap
+
+  // A staged roster for screenshots and for showing the thing off, using the
+  // agent roles xAI publishes as examples. Three bots want you, the rest are
+  // idle; ages are relative to when demo mode was switched on.
+  property bool demoMode: false
+  property double demoStart: 0
+  property bool demoNeedsHelp: true
+  readonly property var demoSnap: {
+    var t = (demoStart || Date.now()) / 1000
+    var ago = function(mins) { return t - mins * 60 }
+    var bot = function(id, name, title, shape, color, hex, unread, awaiting, mins, text) {
+      return { id: id, name: name, title: title, description: "", shape: shape, color: color,
+               hex: hex, is_group: false, members: 0, unread: unread, awaiting: awaiting,
+               working: false, working_since_ts: 0, muted: false, last_text: text,
+               last_activity_ts: ago(mins), last_viewed_ts: ago(mins), focused: false, pinned: false,
+               awaiting_reason: awaiting ? "Approval needed before changing your calendar." : "" }
+    }
+    var bots = [
+      bot("d1", "Chief of Staff", "Operations", "squircle", "red", "#FF263C", 0, demoNeedsHelp, 34,
+          "Your Thursday is triple-booked. Shall I move the Vercel sync to Friday?"),
+      bot("d2", "Account Health", "Customer Success", "hex", "violet", "#9159FE", 3, false, 12,
+          "Northwind's ingest dropped 60% this week - worth a call before renewal."),
+      bot("d3", "Bug Reproduction", "Engineering", "gem", "orange", "#FF6700", 1, false, 5,
+          "Reproduced #4812 on Firefox only. Trace and a failing test are attached."),
+      bot("d4", "Sales Outbound", "Revenue", "tablet", "green", "#00C972", 0, false, 88,
+          "42 accounts scored overnight; 9 drafts are waiting for your voice check."),
+      bot("d5", "Expense Manager", "Finance", "capsule", "cyan", "#00BCA6", 0, false, 210,
+          "August close is done. Two receipts still missing from the Berlin trip."),
+      bot("d6", "Talent Scout", "People", "leaf", "yellow", "#FF9800", 0, false, 400,
+          "Shortlisted 6 for the platform role. Two have Rust plus Wayland experience."),
+      bot("d7", "Paid Media", "Growth", "shield", "blue", "#1084FE", 0, false, 1500,
+          "CAC is flat at $180. I paused the two worst ad groups."),
+      bot("p1", "Trip Planner", "Personal", "cloud", "magenta", "#FF309B", 0, false, 2600,
+          "Held two flights to Lisbon for March. Neither needs paying until Friday."),
+      bot("p2", "Reading Pile", "Personal", "teardrop", "brown", "#936439", 0, false, 11000,
+          "Six saved articles this week. Two are the same paper with different headlines."),
+      bot("d8", "Release Notes", "Engineering", "pebble", "cyan", "#00BCA6", 0, false, 46,
+          "0.42 is tagged. Draft covers the scrolling layout and two crash fixes."),
+      bot("d9", "Inbox Triage", "Operations", "arch", "gray", "#777777", 0, false, 150,
+          "Cleared 214 overnight. Four need you: all of them are contracts."),
+      bot("d10", "Competitor Watch", "Strategy", "crystal", "blue", "#1084FE", 0, false, 700,
+          "Two pricing pages changed this week. Both moved usage under a seat minimum."),
+      bot("p3", "Home Lab", "Personal", "dome", "green", "#00C972", 0, false, 3400,
+          "The NAS finished its scrub with no errors. Backups are four days behind."),
+      bot("p4", "Recipe Box", "Personal", "bean", "orange", "#FF6700", 0, false, 20000,
+          "Saved the miso aubergine one. It wants an hour you have not had lately.")
+    ]
+    return {
+      generated_ts: t,
+      app: { running: true, version: "0.27.3", pid: 0, started_ts: ago(600), alive_ts: t,
+             crash_seen: false, url: "https://rakazo.example" },
+      counts: { bots: bots.length, awaiting: demoNeedsHelp ? 1 : 0, working: 0, unread: 2, unread_messages: 4, groups: 0 },
+      sections: [
+        { id: "s1", name: "ACME", bot_ids: ["d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10"] },
+        { id: "s2", name: "Personal", bot_ids: ["p1", "p2", "p3", "p4"] }
+      ],
+      bots: bots
+    }
+  }
+  function toggleDemo() {
+    demoArrivalTimer.stop()
+    demoNeedsHelp = true
+    demoStart = Date.now()
+    demoMode = !demoMode
+    cursor = 0
+    if (opened) requestGreeting(false)
+  }
+  Timer { id: demoArrivalTimer; interval: 1000; onTriggered: root.demoNeedsHelp = true }
+  property bool scrub: false
+  property int cursor: 0
+  property double nowMs: Date.now()
+
+  readonly property var counts: snap && snap.counts ? snap.counts : ({})
+  readonly property var bots: snap && snap.bots ? snap.bots : []
+  readonly property var sections: snap && snap.sections ? snap.sections : []
+  readonly property var app: snap && snap.app ? snap.app : ({})
+  readonly property bool alarming: (counts.awaiting || 0) > 0
+  readonly property bool attention: alarming || (counts.unread || 0) > 0
+
+  // Bots that want you, most recently active first: the bar shows these.
+  readonly property var wanting: {
+    var out = []
+    for (var i = 0; i < bots.length; i++) {
+      var b = bots[i]
+      if (b.awaiting || b.working || b.unread > 0) out.push(b)
+    }
+    var rank = function(x) { return x.awaiting ? 0 : (x.working ? 1 : 2) }
+    out.sort(function(a, b) {
+      if (rank(a) !== rank(b)) return rank(a) - rank(b)
+      return (b.last_activity_ts || 0) - (a.last_activity_ts || 0)
+    })
+    return out
+  }
+
+  // Expression carries state. Muted is not it: most bots ship with
+  // notifications off, and a roster of sleeping avatars says nothing. Gone
+  // quiet for a week does say something, so that is what dozes.
+  readonly property double staleAfterS: 7 * 24 * 3600
+  function faceFor(b) {
+    if (b.awaiting) return "attentive"
+    if (b.unread > 1) return "excited"
+    if (b.unread > 0) return "curious"
+    if (b.last_activity_ts && (nowMs / 1000 - b.last_activity_ts) > staleAfterS) return "drowsy"
+    return "neutral"
+  }
+  function colorFor(b) { return b.hex ? b.hex : (b.color === "black" ? fg : dim) }
+
+  // Rows the cursor can land on, rebuilt whenever the view changes.
+  readonly property var rows: {
+    var out = []
+    if (!snap) return out
+    if (ordering === "attention") {
+      var wants = [], rest = []
+      for (var b = 0; b < bots.length; b++) {
+        var bot = bots[b]
+        ;(bot.awaiting || bot.unread > 0 ? wants : rest).push(bot)
+      }
+      // Waiting longest first: the one that has been ignored most deserves the top.
+      wants.sort(function(x, y) { return (x.last_activity_ts || 0) - (y.last_activity_ts || 0) })
+      rest.sort(function(x, y) { return (y.last_activity_ts || 0) - (x.last_activity_ts || 0) })
+      for (var w = 0; w < wants.length; w++) out.push({ kind: "bot", bot: wants[w] })
+      if (wants.length > 0 && rest.length > 0) out.push({ kind: "rule" })
+      for (var r2 = 0; r2 < rest.length; r2++) out.push({ kind: "bot", bot: rest[r2] })
+      return out
+    }
+    if (ordering === "channels" && sections.length > 0) {
+      var byId = ({})
+      for (var i = 0; i < bots.length; i++) byId[bots[i].id] = bots[i]
+      for (var s = 0; s < sections.length; s++) {
+        var ids = sections[s].bot_ids || []
+        if (ids.length === 0) continue
+        out.push({ kind: "section", name: sections[s].name, count: ids.length })
+        for (var k = 0; k < ids.length; k++) if (byId[ids[k]]) out.push({ kind: "bot", bot: byId[ids[k]] })
+      }
+    } else {
+      var sorted = bots.slice().sort(function(a, b) {
+        return (b.last_activity_ts || 0) - (a.last_activity_ts || 0)
+      })
+      for (var j = 0; j < sorted.length; j++) out.push({ kind: "bot", bot: sorted[j] })
+    }
+    return out
+  }
+  readonly property var botRows: {
+    var out = []
+    for (var i = 0; i < rows.length; i++) if (rows[i].kind === "bot") out.push(i)
+    return out
+  }
+
+  // ---------------------------------------------------------------- watcher
+  Process {
+    id: watcherProc
+    command: [root.watcher, "--interval", "2"]
+    running: true
+    stdout: SplitParser { onRead: function(data) { root.parseState(data) } }
+    stderr: SplitParser {
+      onRead: function(data) { if (String(data).trim() !== "") console.warn("rakabot", String(data).trim()) }
+    }
+    onExited: function(code) { console.warn("rakabot", "watcher exited", code); restartTimer.start() }
+  }
+  Timer { id: restartTimer; interval: 5000; onTriggered: watcherProc.running = true }
+
+  function parseState(text) {
+    try {
+      var parsed = JSON.parse(String(text || ""))
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.bots)) {
+        root.liveSnap = parsed
+        root.nowMs = Date.now()
+      }
+    } catch (e) {
+      console.warn("rakabot", "bad state line", e)
+    }
+  }
+
+  Timer { interval: 30000; running: root.opened; repeat: true; onTriggered: root.nowMs = Date.now() }
+
+  onOpenedChanged: if (opened) {
+    nowMs = Date.now()
+    cursor = 0
+    panelFlick.contentY = 0
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    requestGreeting(false)
+  }
+
+
+  // Rows greet themselves when this fires: each avatar owns its own timing,
+  // so there is no central loop to fall out of step with the list.
+  signal greetRequested(bool everyone)
+
+  // The bar's own avatars look up when the pointer arrives, before the panel
+  // is even open. Same shape as the panel's greeting: each one hears the
+  // signal and owns its own timing.
+  signal barGreeted()
+  // Shifts which flourish each position gets, so the same three bots do not
+  // do the same three things every time you pass the bar.
+  property int barGreetSeed: 0
+
+  Timer {
+    id: greetOnOpen
+    interval: 260
+    onTriggered: root.greetRequested(greetEveryone)
+    property bool greetEveryone: false
+  }
+  function requestGreeting(everyone) {
+    dealFlourishes()
+    greetOnOpen.greetEveryone = !!everyone
+    greetOnOpen.restart()
+  }
+
+  // Greetings deal from a shuffled deck rather than rolling independently, so
+  // three bots never all hop at once. Past a full deck it reshuffles, and it
+  // will not repeat the card that was just played across that seam.
+  property var flourishDeck: []
+  property int flourishCount: 6
+  property int lastFlourish: -1
+  function dealFlourishes() {
+    var deck = []
+    for (var i = 0; i < flourishCount; i++) deck.push(i)
+    for (var j = deck.length - 1; j > 0; j--) {
+      var k = Math.floor(Math.random() * (j + 1))
+      var t = deck[j]; deck[j] = deck[k]; deck[k] = t
+    }
+    if (deck.length > 1 && deck[deck.length - 1] === lastFlourish) {
+      var swap = deck[0]; deck[0] = deck[deck.length - 1]; deck[deck.length - 1] = swap
+    }
+    flourishDeck = deck
+  }
+  function nextFlourish() {
+    if (!flourishDeck || flourishDeck.length === 0) dealFlourishes()
+    var deck = flourishDeck
+    var pick = deck.pop()
+    flourishDeck = deck
+    lastFlourish = pick
+    return pick
+  }
+
+  // Open Rakazo. There is no deep link to a single bot, so this raises a Rakazo
+  // window if one is open - the desktop app, Omarchy's web app wrapper, or the
+  // server in a browser tab - and otherwise opens the server's address.
+  readonly property var appWindowClasses: ["rakazo", "rakazo-desktop", "oomarchy-rakazo", "rakazo-web"]
+  function focusApp() {
+    var url = String(root.app.url || "")
+    Quickshell.execDetached(["bash", "-c",
+      "addr=$(hyprctl clients -j | python3 -c \"import sys,json;d=json.load(sys.stdin);k=set(json.loads(sys.argv[1]));w=[c['address'] for c in d if (c.get('class') or '').lower() in k or (c.get('initialClass') or '').lower() in k];print(w[0] if w else '')\" \"$2\"); " +
+      "if [ -n \"$addr\" ]; then hyprctl dispatch \"hl.dsp.focus({ window = \\\"address:$addr\\\" })\" || hyprctl dispatch focuswindow \"address:$addr\"; " +
+      "elif [ -n \"$1\" ]; then uwsm-app -- xdg-open \"$1\"; fi",
+      "rakabot", url, JSON.stringify(root.appWindowClasses)])
+    root.close()
+  }
+
+  IpcHandler {
+    // Omarchy instantiates a bar widget more than once (a hidden copy is used
+    // for measurement), and both copies would register for the same target -
+    // the loser silently drops every call. Only the copy actually mounted in a
+    // bar takes the name, so `omarchy-shell ozz1ee.rakabot …` reaches the one
+    // on screen.
+    enabled: root.bar !== null
+    target: root.ipcTarget
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function scrub(): string { root.scrub = !root.scrub; return root.scrub ? "scrubbed" : "clear" }
+    function group(): string { root.cycleOrdering(); return root.ordering }
+    function order(mode: string): string { root.ordering = mode; return root.ordering }
+    // A staged roster for screenshots; call again to go back to the real one.
+    function demo(): string {
+      root.toggleDemo()
+      if (root.demoMode && !root.opened) root.open()
+      return root.demoMode ? "demo roster" : "live roster"
+    }
+    function demoAssistance(): string {
+      if (!root.demoMode) root.toggleDemo()
+      root.close()
+      root.demoNeedsHelp = false
+      demoArrivalTimer.restart()
+      return "Chief of Staff will ask for assistance in one second"
+    }
+    // Play the greeting on demand: every bot, whether or not it has news.
+    // Opens the panel first, because a panel loses focus - and closes - the
+    // moment you type the command in a terminal.
+    function greet(): string {
+      if (!root.opened) root.open()
+      root.requestGreeting(true)
+      root.barGreetSeed += 1
+      root.barGreeted()
+      return "greeting"
+    }
+    function geometry(): string {
+      return JSON.stringify({ x: panel.cardOrigin.x, y: panel.cardOrigin.y, w: panel.contentWidth, h: panel.contentHeight })
+    }
+    function metric(): string { root.cycleBarMetric(false); return root.barMetric }
+    // Aim the eyes at a point in the panel, in its own coordinates. The eyes
+    // follow a real pointer; this is how a recording without one drives them.
+    function look(x: int, y: int): string {
+      keyCatcher.pointerAt(x, y)
+      return x + "," + y
+    }
+    function away(): string { keyCatcher.pointerGone(); return "away" }
+    function state(): string {
+      return JSON.stringify({ counts: root.counts, app: root.app, bots: root.bots.length,
+        barEdge: root.barEdge, barAvatars: barAvatarModel.count })
+    }
+  }
+
+  // ---------------------------------------------------------------- helpers
+  function fmtAgo(ts) {
+    if (!ts) return ""
+    var s = Math.max(0, nowMs / 1000 - ts)
+    if (s < 90) return "now"
+    var m = Math.floor(s / 60)
+    if (m < 60) return m + "m"
+    var h = Math.floor(m / 60)
+    if (h < 24) return h + "h"
+    var d = Math.floor(h / 24)
+    return d < 7 ? d + "d" : Math.floor(d / 7) + "w"
+  }
+  function noise(text) {
+    var glyphs = "░▒▓█▓▒", h = 2166136261, out = ""
+    for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = (h * 16777619) >>> 0 }
+    for (var j = 0; j < text.length; j++) {
+      h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0
+      out += glyphs.charAt(h % glyphs.length)
+    }
+    return out
+  }
+  function label(text) { text = String(text || ""); return scrub ? noise(text) : text }
+
+  function moveCursor(delta) {
+    if (botRows.length === 0) return
+    var at = botRows.indexOf(cursor)
+    if (at < 0) { cursor = botRows[0]; return }
+    cursor = botRows[Math.max(0, Math.min(botRows.length - 1, at + delta))]
+    ensureVisible()
+  }
+  function ensureVisible() {
+    var item = repeater.itemAt(cursor)
+    if (!item) return
+    if (item.y < panelFlick.contentY) panelFlick.contentY = Math.max(0, item.y - Style.space(8))
+    else if (item.y + item.height > panelFlick.contentY + panelFlick.height)
+      panelFlick.contentY = Math.min(panelFlick.contentHeight - panelFlick.height,
+                                     item.y + item.height - panelFlick.height + Style.space(8))
+  }
+
+  // ---------------------------------------------------------------- bar
+  // In count mode: how many bots want you. Nothing when nobody does, so the
+  // bar stays quiet; in avatars mode the faces say it instead.
+  readonly property int wantingCount: wanting.length
+  readonly property string barText: {
+    if (!snap || vertical || barMetric !== "count") return ""
+    return wantingCount > 0 ? String(wantingCount) : ""
+  }
+  readonly property string barTooltip: {
+    if (!snap) return "Rakabot"
+    if (!app.running) return app.error ? "Rakazo: not answering" : "Rakazo: not configured"
+    var c = counts
+    return (c.bots || 0) + " bots · " + (c.awaiting || 0) + " waiting on you · "
+      + (c.working || 0) + " working · " + (c.unread_messages || 0) + " unread · Rakazo "
+      + (app.version || "?")
+  }
+
+  implicitWidth: vertical ? (bar ? bar.barSize : Style.bar.sizeHorizontal) : row.implicitWidth
+  implicitHeight: vertical ? row.implicitHeight : (bar ? bar.barSize : Style.bar.sizeHorizontal)
+  readonly property real openPanelIndicatorWidth: row.width
+  readonly property real openPanelIndicatorHeight: row.height
+
+  // What the bar draws beside the logo. Nothing waiting means nothing beside
+  // it - the logo alone is still the widget, and still opens the panel.
+  readonly property bool vertical: !!(bar && bar.vertical)
+  readonly property var barAvatars: (!snap || !app.running || barMetric !== "avatars")
+    ? [] : wanting.slice(0, maxBarAvatars)
+  readonly property string barEdge: bar ? bar.position : "top"
+
+  // Keep delegates keyed by bot, rather than recreating every face on each
+  // watcher snapshot. Only new slots make room and drop in.
+  ListModel { id: barAvatarModel }
+  onBarAvatarsChanged: syncBarAvatars()
+
+  function syncBarAvatars() {
+    var ids = barAvatars.map(function(bot) { return bot.id })
+    for (var i = barAvatarModel.count - 1; i >= 0; i--)
+      if (ids.indexOf(barAvatarModel.get(i).botId) < 0) barAvatarModel.remove(i)
+    for (var j = 0; j < ids.length; j++) {
+      var at = j
+      while (at < barAvatarModel.count && barAvatarModel.get(at).botId !== ids[j]) at++
+      if (at === barAvatarModel.count) barAvatarModel.insert(j, { botId: ids[j] })
+      else if (at !== j) barAvatarModel.move(at, j, 1)
+    }
+  }
+  // The glyphs beside it carry their own optical padding; a mark drawn to the
+  // full icon canvas would stand taller than all of them.
+  readonly property real markSize: Math.round(Style.bar.iconCanvas * 0.82)
+  // How far the row pulls back into the icon slot's padding, to bring what
+  // follows the mark close enough to read as part of it.
+  readonly property real barPull: Style.space(3)
+  // Same parity as the mark, so both round their centre to the same pixel -
+  // otherwise the avatars sit half a pixel below it, which reads as crooked.
+  readonly property real barAvatarSize: {
+    var h = Math.round(Style.font.caption * 1.15)
+    return (h % 2) === (markSize % 2) ? h : h + 1
+  }
+
+  Grid {
+    id: row
+    anchors.centerIn: parent
+    columns: root.vertical ? 1 : 4
+    horizontalItemAlignment: Grid.AlignHCenter
+    verticalItemAlignment: Grid.AlignVCenter
+    // The icon slot is wider than the mark drawn inside it, which leaves as
+    // much air after the mark as there is between whole widgets. Pull back
+    // into that padding so the mark and what follows read as one thing.
+    spacing: -root.barPull
+
+    // The Rakazo mark, always. Drawn rather than loaded from the app icon so
+    // it takes the bar's colours like every other widget instead of dropping a
+    // dark tile into the theme, and outlined so it carries the same weight as
+    // the line glyphs beside it. Dimmed when the app is not running.
+    BarIconButton {
+      id: button
+      bar: root.bar
+      text: "\u{f06a9}"
+      onPressed: function(buttonCode) { root.barPressed(buttonCode) }
+      iconComponent: Component {
+        Item {
+          Avatar {
+            anchors.centerIn: parent
+            width: root.markSize
+            height: width
+            shape: "squircle"
+            outlined: true
+            fill: root.bar ? root.bar.barForeground : root.fg
+            eyeColor: root.bar ? root.bar.barForeground : root.fg
+            face: "neutral"
+            opacity: root.app.running ? 1.0 : 0.45
+            Behavior on opacity { NumberAnimation { duration: 220 } }
+          }
+        }
+      }
+    }
+
+    // Along the bar: reserve the slot first, then enter from the screen edge.
+    Item {
+      id: avatars
+      implicitWidth: root.vertical ? root.barAvatarSize : Math.max(0, avatarGrid.implicitWidth - Style.space(3))
+      implicitHeight: root.vertical ? Math.max(0, avatarGrid.implicitHeight - Style.space(3)) : root.barAvatarSize
+      width: implicitWidth
+      height: implicitHeight
+      visible: barAvatarModel.count > 0
+
+      Grid {
+        id: avatarGrid
+        columns: root.vertical ? 1 : Math.max(1, barAvatarModel.count)
+
+        Repeater {
+          model: barAvatarModel
+          Item {
+            id: avatarSlot
+            required property string botId
+            required property int index
+            readonly property var bot: {
+              for (var i = 0; i < root.barAvatars.length; i++)
+                if (root.barAvatars[i].id === botId) return root.barAvatars[i]
+              return ({})
+            }
+            readonly property bool awaiting: !!bot.awaiting
+            property bool ready: false
+            property real spaceProgress: 0
+            property real dropProgress: 0
+            property real ink: 0
+            readonly property real extent: (root.barAvatarSize + Style.space(3)) * spaceProgress
+            width: root.vertical ? root.barAvatarSize : extent
+            height: root.vertical ? extent : root.barAvatarSize
+
+            Component.onCompleted: { ready = true; arrive.start() }
+            // Already visible as working/unread? Its space exists: just settle
+            // into the new attentive state, without shifting the neighbours.
+            onAwaitingChanged: if (ready && awaiting && !arrive.running) drop.restart()
+
+            SequentialAnimation {
+              id: arrive
+              NumberAnimation { target: avatarSlot; property: "spaceProgress"; to: 1; duration: 220; easing.type: Easing.OutCubic }
+              ScriptAction { script: drop.restart() }
+            }
+            SequentialAnimation {
+              id: drop
+              // Hit the resting line, rebound towards the screen edge twice,
+              // then pause on the bar before the one-shot attention wiggle.
+              ParallelAnimation {
+                NumberAnimation { target: avatarSlot; property: "dropProgress"; from: 0; to: 1; duration: 280; easing.type: Easing.InQuad }
+                NumberAnimation { target: avatarSlot; property: "ink"; from: 0; to: 1; duration: 180 }
+              }
+              NumberAnimation { target: avatarSlot; property: "dropProgress"; to: 0.84; duration: 130; easing.type: Easing.OutQuad }
+              NumberAnimation { target: avatarSlot; property: "dropProgress"; to: 1; duration: 150; easing.type: Easing.InQuad }
+              NumberAnimation { target: avatarSlot; property: "dropProgress"; to: 0.945; duration: 100; easing.type: Easing.OutQuad }
+              NumberAnimation { target: avatarSlot; property: "dropProgress"; to: 1; duration: 110; easing.type: Easing.InQuad }
+              PauseAnimation { duration: 140 }
+              ScriptAction { script: { if (avatarSlot.awaiting) barAvatar.play(1) } }
+            }
+
+            Avatar {
+              id: barAvatar
+              width: root.barAvatarSize
+              height: root.barAvatarSize
+              shape: avatarSlot.bot.shape || "squircle"
+              image: avatarSlot.bot.avatar ? "file://" + avatarSlot.bot.avatar : ""
+              fill: root.colorFor(avatarSlot.bot)
+              eyeColor: root.eyeInk
+              face: root.faceFor(avatarSlot.bot)
+              opacity: avatarSlot.ink
+              transform: Translate {
+                readonly property real distance: (1 - avatarSlot.dropProgress) * ((root.vertical ? root.width : root.height) + root.barAvatarSize)
+                x: root.vertical ? (root.barEdge === "left" ? -1 : 1) * distance : 0
+                y: root.vertical ? 0 : (root.barEdge === "bottom" ? 1 : -1) * distance
+              }
+
+              Connections {
+                target: root
+                function onBarGreeted() { if (!arrive.running && !drop.running) greet.restart() }
+              }
+              Timer {
+                id: greet
+                interval: 30 + avatarSlot.index * 90
+                onTriggered: if (!arrive.running && !drop.running) barAvatar.playBold(avatarSlot.index + root.barGreetSeed)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Or, to its right: how many are waiting.
+    Text {
+      textFormat: Text.PlainText
+      id: metric
+      visible: root.barText !== ""
+      text: root.barText
+      color: root.alarming ? root.urgent : (root.bar ? root.bar.barForeground : root.fg)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    // Close the widget with as much air as the icon slot opens it with, so
+    // whatever is beside the mark is not left flush against the next widget.
+    // The pull-back applies here too, so add it back or the tail comes up
+    // short of the head.
+    Item {
+      readonly property real padding: (avatars.visible || metric.visible)
+        ? Math.round((button.width - root.markSize) / 2) + root.barPull : 0
+      height: root.vertical ? padding : 1
+      width: root.vertical ? 1 : padding
+    }
+  }
+
+  MouseArea {
+    anchors.fill: row
+    hoverEnabled: true
+    cursorShape: Qt.PointingHandCursor
+    acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+    onClicked: function(mouse) { root.barPressed(mouse.button) }
+    onEntered: {
+      if (root.bar) root.bar.showTooltip(row, root.barTooltip)
+      root.barGreetSeed += 1
+      root.barGreeted()
+    }
+    onExited: if (root.bar) root.bar.hideTooltip(row)
+  }
+
+  function barPressed(buttonCode) {
+    if (buttonCode === Qt.RightButton) root.focusApp()
+    else if (buttonCode === Qt.MiddleButton) root.cycleBarMetric()
+    else root.toggle()
+  }
+
+  // ---------------------------------------------------------------- panel
+  KeyboardPanel {
+    id: panel
+    anchorItem: row
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(420))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight + Style.space(16), Style.space(900))
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+
+      onMoveRequested: function(dx, dy) {
+        if (dx < 0) root.scrub = !root.scrub
+        if (dy !== 0) root.moveCursor(dy)
+      }
+      onActivateRequested: root.focusApp()
+      onCloseRequested: root.close()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(t) {
+        if (t === "r") root.cycleBarMetric()
+        else if (t === "g" || t === "G") root.cycleOrdering()
+      }
+
+      // Where the pointer is, in panel coordinates. Avatars map it into their
+      // own space and lean toward it; -1 means "not over the panel".
+      property real pointerX: -1
+      property real pointerY: -1
+
+      function pointerAt(x, y) {
+        pointerLeave.stop()
+        pointerX = x
+        pointerY = y
+      }
+
+      // Hover belongs to the topmost item, so crossing from a row onto a
+      // separator - or between two rows - hands it over and reads as leaving.
+      // Wait a moment before believing it: a real departure stays away, a
+      // handover puts the pointer back within a frame or two, and the eyes
+      // never snap forward for it.
+      function pointerGone() { pointerLeave.restart() }
+
+      Timer {
+        id: pointerLeave
+        interval: 260
+        onTriggered: { keyCatcher.pointerX = -1; keyCatcher.pointerY = -1 }
+      }
+
+      MouseArea {
+        id: pointerTracker
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.NoButton
+        propagateComposedEvents: true
+        onPositionChanged: function(mouse) { keyCatcher.pointerAt(mouse.x, mouse.y) }
+        onExited: keyCatcher.pointerGone()
+      }
+
+      Flickable {
+        id: panelFlick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight + Style.space(8)
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        Column {
+          id: column
+          x: Style.space(4)
+          width: parent.width - Style.space(8)
+          spacing: 0
+
+          // ---- header
+          Item {
+            width: parent.width
+            height: header.implicitHeight + Style.space(10)
+            Column {
+              id: header
+              width: parent.width
+              spacing: Style.space(2)
+              Text {
+                textFormat: Text.PlainText
+                text: {
+                  if (root.demoMode) return "RAKAZO · demo roster"
+                  if (!root.snap) return "starting…"
+                  if (!root.app.running) return "RAKAZO · offline"
+                  return "RAKAZO " + (root.app.version || "")
+                }
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Text {
+                textFormat: Text.PlainText
+                visible: root.snap && root.app.running
+                text: {
+                  var c = root.counts
+                  var bits = [(c.bots || 0) + " bots"]
+                  if ((c.awaiting || 0) > 0) bits.push(c.awaiting + " waiting on you")
+                  if ((c.working || 0) > 0) bits.push(c.working + " working")
+                  if ((c.unread_messages || 0) > 0) bits.push(c.unread_messages + " unread")
+                  if ((c.groups || 0) > 0) bits.push(c.groups + " group")
+                  return bits.join(" · ")
+                }
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+          }
+
+          Rectangle { width: parent.width; height: 1; color: root.faint }
+
+          // ---- rows
+          Repeater {
+            id: repeater
+            model: root.rows
+
+            Item {
+              id: rowItem
+              required property var modelData
+              required property int index
+              width: column.width
+              height: modelData.kind === "section" ? Style.space(26)
+                    : modelData.kind === "rule" ? Style.space(13) : Style.space(46)
+
+              // The break between "wants you" and everyone else. At the same
+              // weight as the section rules it was too quiet to do its job -
+              // this is the one division in the list that carries meaning.
+              Rectangle {
+                visible: modelData.kind === "rule"
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width
+                height: 1
+                color: root.divider
+              }
+
+              // Bots with news get greeted when the panel opens.
+              readonly property bool wantsGreeting: modelData.kind === "bot"
+                && (modelData.bot.unread > 0 || modelData.bot.awaiting)
+
+              Connections {
+                target: root
+                function onGreetRequested(everyone) {
+                  if (rowItem.modelData.kind !== "bot") return
+                  if (everyone || rowItem.wantsGreeting) rowGreet.restart()
+                }
+              }
+              // Staggered by position so the flourishes read as a wave.
+              Timer {
+                id: rowGreet
+                interval: 60 + rowItem.index * 85
+                onTriggered: if (rowAvatar) rowAvatar.play(root.nextFlourish())
+              }
+
+              // section header
+              Text {
+                textFormat: Text.PlainText
+                visible: modelData.kind === "section"
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Style.space(4)
+                text: root.label(modelData.name).toUpperCase() + "  " + (modelData.count || "")
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              // bot row
+              Rectangle {
+                visible: modelData.kind === "bot"
+                anchors.fill: parent
+                anchors.leftMargin: -Style.space(4)
+                anchors.rightMargin: -Style.space(4)
+                radius: Style.space(1.5)
+                color: index === root.cursor ? root.hilite : "transparent"
+
+                Row {
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(8)
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
+                  spacing: Style.space(9)
+
+                  Avatar {
+                    id: rowAvatar
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(28)
+                    height: Style.space(28)
+                    shape: modelData.kind === "bot" ? modelData.bot.shape : "blob"
+                    image: modelData.kind === "bot" && modelData.bot.avatar
+                           ? "file://" + modelData.bot.avatar : ""
+                    fill: modelData.kind === "bot" ? root.colorFor(modelData.bot) : root.dim
+                    eyeColor: root.eyeInk
+                    face: modelData.kind === "bot" ? root.faceFor(modelData.bot) : "neutral"
+                    Component.onCompleted: root.flourishCount = flourishCount
+
+                    // Watch the pointer while it is over the panel. Every row
+                    // maps the one shared position into its own coordinates, so
+                    // the whole list looks at the same spot from where it sits.
+                    readonly property point look: mapFromItem(keyCatcher,
+                      keyCatcher.pointerX, keyCatcher.pointerY)
+                    looking: keyCatcher.pointerX >= 0
+                    followX: look.x
+                    followY: look.y
+
+                    // Just read, or just answered: take a bow.
+                    property bool wasWanted: false
+                    onFaceChanged: {
+                      var wants = face === "attentive" || face === "excited" || face === "curious"
+                      if (wants) wasWanted = true
+                      else if (wasWanted) { wasWanted = false; celebrate() }
+                    }
+                  }
+
+                  Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - Style.space(28) - Style.space(9) - badge.width - Style.space(9)
+                    spacing: Style.space(1)
+
+                    Row {
+                      spacing: Style.space(5)
+                      width: parent.width
+                      Text {
+                        textFormat: Text.PlainText
+                        text: modelData.kind === "bot" ? root.label(modelData.bot.name) : ""
+                        color: modelData.kind === "bot" && modelData.bot.focused ? root.accent : root.fg
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: modelData.kind === "bot" && (modelData.bot.awaiting || modelData.bot.unread > 0)
+                      }
+                      Text {
+                        textFormat: Text.PlainText
+                        text: modelData.kind === "bot"
+                          ? (modelData.bot.is_group ? "group of " + modelData.bot.members
+                                                    : root.label(modelData.bot.title))
+                          : ""
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        elide: Text.ElideRight
+                        width: Math.max(0, parent.width - Style.space(120))
+                      }
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      text: modelData.kind === "bot"
+                        ? (modelData.bot.awaiting && modelData.bot.awaiting_reason ? root.label(modelData.bot.awaiting_reason)
+                           : (modelData.bot.working ? "thinking…" : root.label(modelData.bot.last_text)))
+                        : ""
+                      // Full foreground for the ones waiting on you, dimmed for
+                      // the rest: weight carries it, so nothing has to shout.
+                      color: modelData.kind === "bot" && modelData.bot.awaiting ? root.fg
+                             : (modelData.kind === "bot" && modelData.bot.working ? root.accent : root.dim)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                      maximumLineCount: 1
+                    }
+                  }
+
+                  Column {
+                    id: badge
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(38)
+                    spacing: Style.space(2)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      anchors.right: parent.right
+                      text: modelData.kind === "bot" ? root.fmtAgo(modelData.bot.last_activity_ts) : ""
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                    Rectangle {
+                      anchors.right: parent.right
+                      visible: modelData.kind === "bot" && modelData.bot.unread > 0
+                      width: Math.max(Style.space(14), unreadText.implicitWidth + Style.space(6))
+                      height: Style.space(14)
+                      radius: height / 2
+                      color: root.accent
+                      Text {
+                        textFormat: Text.PlainText
+                        id: unreadText
+                        anchors.centerIn: parent
+                        text: modelData.kind === "bot" ? String(modelData.bot.unread) : ""
+                        color: Color.background
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onEntered: {
+                    root.cursor = index
+                    var e = mapToItem(keyCatcher, mouseX, mouseY)
+                    keyCatcher.pointerAt(e.x, e.y)
+                  }
+                  onExited: keyCatcher.pointerGone()
+                  onClicked: root.focusApp()
+                  // Hover goes to the topmost item, so a row would otherwise
+                  // starve the panel-wide tracker and the eyes would freeze
+                  // exactly when you are looking at them.
+                  onPositionChanged: function(mouse) {
+                    var p = mapToItem(keyCatcher, mouse.x, mouse.y)
+                    keyCatcher.pointerAt(p.x, p.y)
+                  }
+                }
+              }
+            }
+          }
+
+          // ---- empty states
+          Text {
+            textFormat: Text.PlainText
+            visible: root.snap && root.bots.length === 0
+            width: parent.width
+            topPadding: Style.space(10)
+            text: root.app.running ? "no bots in the roster yet"
+                                    : ("check the server in ~/.config/rakabot/config.json"
+                                       + (root.app.error ? " - " + root.app.error : ""))
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Rectangle { width: parent.width; height: 1; color: root.faint; visible: root.bots.length > 0 }
+
+          // ---- footer
+          Item {
+            width: parent.width
+            height: Style.space(30)
+            Text {
+              textFormat: Text.PlainText
+              anchors.verticalCenter: parent.verticalCenter
+              text: "j/k move · ⏎ open app · g " + root.ordering
+                    + " · h hide · r beside logo: " + root.barMetric
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+      }
+    }
+  }
+}

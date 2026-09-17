@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "ozz1ee.rakabot",
+  "name": "Rakabot",
+  "version": "0.1.0",
+  "author": "ozz1ee",
+  "license": "Apache-2.0",
+  "description": "Your Rakazo roster in the bar: every bot drawn as its own avatar, with an expression for its state and one keypress to the server.",
+  "preview": "preview.png",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Rakabot",
+    "description": "Bots waiting on you appear in the bar as their own avatars - the shape and colour they have in Rakazo - and the panel lists every bot and group by section with its last message.",
+    "category": "AI",
+    "aliases": [
+      "rakabot",
+      "rakazo",
+      "bots"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "barMetric": "avatars",
+      "groupBySection": "true",
+      "maxBarAvatars": 3,
+      "ordering": "attention"
+    },
+    "schema": [
+      {
+        "key": "barMetric",
+        "type": "enum",
+        "label": "What sits beside the logo",
+        "options": [
+          "avatars",
+          "count",
+          "none"
+        ],
+        "defaultValue": "avatars",
+        "description": "The Rakazo logo is always shown. To its right: avatars = the bots waiting on you, as themselves; count = how many are waiting; none = the logo alone."
+      },
+      {
+        "key": "ordering",
+        "type": "enum",
+        "label": "Panel order",
+        "options": [
+          "attention",
+          "channels",
+          "flat"
+        ],
+        "defaultValue": "attention",
+        "description": "attention = bots waiting on you first, longest wait at the top, then a rule and everyone else by recency; channels = the sections you set up in Rakazo; flat = purely by last message."
+      },
+      {
+        "key": "groupBySection",
+        "type": "boolean",
+        "label": "Group the panel by section",
+        "defaultValue": "true",
+        "description": "Use the sections you set up in Rakazo's sidebar. Off sorts every bot together, most urgent first."
+      },
+      {
+        "key": "maxBarAvatars",
+        "type": "integer",
+        "label": "Most avatars to show in the bar",
+        "min": 1,
+        "max": 6,
+        "step": 1,
+        "defaultValue": 3
+      }
+    ]
+  }
+}

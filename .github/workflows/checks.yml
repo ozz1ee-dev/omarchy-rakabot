@@ -1,0 +1,36 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: watcher and setup tests
+        run: python3 -B -m unittest discover -s tests -v
+
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: manifest contract
+        run: python3 scripts/check-manifest.py .
+
+  ascii:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: text files are ASCII
+        # QML is deliberately not in this list: the widget draws real glyphs
+        # (the middle dot, the ellipsis, the return arrow) as part of its design.
+        run: |
+          set -euo pipefail
+          files=$(git ls-files '*.md' '*.py' '*.json' '*.yml' '*.sh')
+          if LC_ALL=C grep -nP '[^\x00-\x7F]' $files; then
+            echo "non-ASCII characters found in the lines above"
+            exit 1
+          fi
+          echo "all tracked text files are ASCII"

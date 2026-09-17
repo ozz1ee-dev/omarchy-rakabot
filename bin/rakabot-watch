@@ -1,0 +1,511 @@
+#!/usr/bin/env python3
+# rakabot-watch - follows a Rakazo server and streams its roster as JSON lines.
+#
+#   stdout  {"generated_ts":..., "app":{...}, "counts":{...}, "sections":[...], "bots":[...]}
+#   config  ~/.config/rakabot/config.json  {"url": "https://rakazo.example", "tokenFile": "..."}
+#   env     RAKABOT_URL, RAKABOT_TOKEN, RAKABOT_CONFIG override the file
+#   args    --interval N   seconds between polls (default 5)
+#           --once         print one snapshot and exit
+#
+# Rakazo is a normal HTTP service (Hono + oRPC) behind Better Auth, so this only
+# reads: /rpc/health, /rpc/bots/list, /rpc/botSections/list, with the session
+# token as an Authorization: Bearer header. Nothing is ever written to the
+# server, and no other host is contacted.
+#
+# The RPC surface and the `color` encoding (`#RRGGBB::shape_N`, or a data: image
+# URL once someone uploads a picture) are internal to Rakazo, not a published
+# contract - the same position omabot is in with Grok Bot's on-disk blobs. Every
+# field is read defensively and an unfamiliar shape degrades to an empty roster
+# rather than a crash.
+import hashlib
+import json
+import os
+import re
+import secrets
+import stat
+import sys
+import time
+import urllib.error
+import urllib.request
+
+PLUGIN = "rakabot"
+DEFAULT_CONFIG = "~/.config/rakabot/config.json"
+DEFAULT_TOKEN_FILE = "~/.config/rakabot/token"
+CACHE = os.path.expanduser("~/.local/state/omarchy/rakabot/avatars")
+
+# Rakazo's shipped avatar palette (packages/ui-tokens, ui-web/src/bot-avatar.tsx),
+# so a bot drawn here is the same colour it is in the app.
+COLORS = {
+  "white": "#FFFFFF", "violet": "#8B5CF6", "green": "#10B981", "orange": "#F97316",
+  "cyan": "#06B6D4", "blue": "#3B82F6", "yellow": "#EAB308", "brown": "#8D6E63",
+  "red": "#EF4444", "magenta": "#EC4899", "gray": "#64748B",
+}
+BY_HEX = {hex_value.lower(): name for name, hex_value in COLORS.items()}
+
+# The order the app indexes shapes in, so `::shape_3` resolves to the same one.
+SHAPE_KEYS = ["hex", "wedge", "squircle", "tablet", "pebble", "blob", "teardrop", "cloud"]
+
+AWAITING = ("waiting_input", "waiting_takeover")
+WORKING = ("queued", "leased", "running")
+
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
+
+
+def object_value(value):
+    return value if isinstance(value, dict) else {}
+
+
+def list_value(value):
+    return value if isinstance(value, list) else []
+
+
+def text_value(value, limit=160):
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", " ", value)[:limit]
+
+
+def epoch(value):
+    """ISO timestamp from the API -> seconds since the epoch."""
+    if not isinstance(value, str) or not value:
+        return 0.0
+    try:
+        from datetime import datetime, timezone
+        text = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(text).replace(tzinfo=datetime.fromisoformat(text).tzinfo or timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+
+
+# --------------------------------------------------------------- shapes/colours
+# Mirrors resolvePersonaShape/resolvePersonaColorDef: a bot with no explicit
+# shape still gets one, picked from a hash of its id, so two clients looking at
+# the same bot draw the same avatar.
+
+def imul(left, right):
+    return (left * right) & 0xFFFFFFFF
+
+
+def shipped_hash(value):
+    digest = 2166136261
+    for character in value:
+        digest = imul(digest ^ ord(character), 16777619)
+    return digest & 0xFFFFFFFF
+
+
+def shipped_random(seed):
+    value = seed & 0xFFFFFFFF
+
+    def draw():
+        nonlocal value
+        value = (value + 1831565813) & 0xFFFFFFFF
+        result = imul(value ^ (value >> 15), 1 | value)
+        result = ((result + imul(result ^ (result >> 7), 61 | result)) & 0xFFFFFFFF) ^ result
+        return ((result ^ (result >> 14)) & 0xFFFFFFFF) / 4294967296
+
+    return draw
+
+
+def persona_shape(identity):
+    digest = shipped_hash(identity)
+    digest = imul(digest ^ (digest >> 16), 73244475)
+    digest = imul(digest ^ (digest >> 13), 3266489909)
+    index = ((digest ^ (digest >> 16)) & 0xFFFFFFFF) % len(SHAPE_KEYS)
+    return SHAPE_KEYS[index]
+
+
+def persona_color(identity):
+    seed = (shipped_hash(identity) ^ imul(1, 2654435769)) & 0xFFFFFFFF
+    names = list(COLORS)
+    index = int(shipped_random((seed ^ 2654435769) & 0xFFFFFFFF)() * len(names))
+    return names[index % len(names)]
+
+
+def parse_avatar(raw, bot_id):
+    """(shopeless) colour, shape and optional uploaded picture for one bot.
+
+    `color` in the API is one of: "#RRGGBB", "#RRGGBB::shape_N", or a data: image
+    URL when the bot wears a picture instead of a shape.
+    """
+    if isinstance(raw, str) and raw.startswith("data:image/"):
+        return None, "squircle", raw
+    if isinstance(raw, str) and "::shape_" in raw:
+        parts = raw.split("::shape_", 1)
+        colour, suffix = parts[0], parts[1]
+        index = int(suffix) % len(SHAPE_KEYS) if suffix.isdigit() else 0
+        return colour or None, SHAPE_KEYS[index], None
+    if isinstance(raw, str) and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", raw):
+        return raw, persona_shape(bot_id), None
+    return None, persona_shape(bot_id), None
+
+
+def colour_name(colour):
+    if not isinstance(colour, str):
+        return ""
+    expanded = colour.lower()
+    if re.fullmatch(r"#[0-9a-f]{3}", expanded):
+        expanded = "#" + "".join(character * 2 for character in expanded[1:])
+    return BY_HEX.get(expanded, "")
+
+
+# ------------------------------------------------------------------- pictures
+# An uploaded picture arrives as a data URL inside the roster. QML wants a file
+# on disk, and a few hundred kilobytes of base64 has no business going through a
+# JSON line every few seconds.
+
+def avatar_filename(url):
+    mime = url.split(",", 1)[0]
+    extension = {"data:image/png;base64": "png", "data:image/jpeg;base64": "jpg",
+                 "data:image/webp;base64": "webp", "data:image/gif;base64": "gif"}.get(mime)
+    if extension is None:
+        return None
+    return hashlib.sha256(url.encode("utf-8", "replace")).hexdigest()[:32] + "." + extension
+
+
+def open_avatar_cache():
+    # Hold every parent while descending: a planted directory symlink must not
+    # redirect creation, publication or cleanup outside the plugin's cache.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    handle = os.open("/", flags)
+    try:
+        for part in os.path.abspath(CACHE).split(os.sep)[1:]:
+            try:
+                child = os.open(part, flags, dir_fd=handle)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=handle)
+                except FileExistsError:
+                    pass
+                child = os.open(part, flags, dir_fd=handle)
+            os.close(handle)
+            handle = child
+        if os.fstat(handle).st_uid != os.geteuid():
+            raise PermissionError("avatar cache is not owned by this user")
+        os.fchmod(handle, 0o700)
+        return handle
+    except BaseException:
+        os.close(handle)
+        raise
+
+
+def cached_avatar(dirfd, name):
+    try:
+        handle = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dirfd)
+    except FileNotFoundError:
+        return False
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or not 0 < info.st_size <= MAX_AVATAR_BYTES:
+            raise ValueError("invalid cached avatar")
+        os.fchmod(handle, 0o600)
+        return True
+    finally:
+        os.close(handle)
+
+
+def write_avatar(dirfd, name, data):
+    # Never open a predictable .part file, even after an existence check.
+    temporary = ".avatar-" + secrets.token_hex(16) + ".tmp"
+    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dirfd)
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, name, src_dir_fd=dirfd, dst_dir_fd=dirfd)
+        os.fsync(dirfd)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=dirfd)
+        except FileNotFoundError:
+            pass
+
+
+def store_avatar(url):
+    """Data URL -> path of the decoded picture in the plugin cache."""
+    name = avatar_filename(url)
+    if name is None:
+        return None
+    header, separator, encoded = url.partition(",")
+    if not separator:
+        return None
+    try:
+        dirfd = open_avatar_cache()
+    except OSError:
+        return None
+    try:
+        if not cached_avatar(dirfd, name):
+            import base64
+            data = base64.b64decode(encoded, validate=True)
+            if not 0 < len(data) <= MAX_AVATAR_BYTES:
+                raise ValueError("avatar exceeds limit")
+            write_avatar(dirfd, name, data)
+        return os.path.join(CACHE, name)
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(dirfd)
+
+
+# ---------------------------------------------------------------------- config
+
+def config_path():
+    return os.path.expanduser(os.environ.get("RAKABOT_CONFIG") or DEFAULT_CONFIG)
+
+
+def load_config():
+    try:
+        with open(config_path()) as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        data = {}
+    config = object_value(data)
+    url = os.environ.get("RAKABOT_URL") or config.get("url") or ""
+    token = os.environ.get("RAKABOT_TOKEN") or ""
+    if not token:
+        token_file = os.path.expanduser(str(config.get("tokenFile") or DEFAULT_TOKEN_FILE))
+        try:
+            with open(token_file) as handle:
+                token = handle.read().strip()
+        except OSError:
+            token = ""
+    return {"url": str(url).rstrip("/"), "token": token,
+            "tokenFile": os.path.expanduser(str(config.get("tokenFile") or DEFAULT_TOKEN_FILE)),
+            "interval": config.get("interval")}
+
+
+def call(config, procedure, payload=None, timeout=10):
+    """One RPC call. Returns (result, error)."""
+    if not config["url"]:
+        return None, "no server configured (see ~/.config/rakabot/config.json)"
+    if not config["token"]:
+        return None, "no token configured (%s)" % config["tokenFile"]
+    body = json.dumps({"json": payload or {}}).encode("utf-8")
+    request = urllib.request.Request(config["url"] + "/rpc/" + procedure, data=body,
+                                     method="POST")
+    request.add_header("content-type", "application/json")
+    request.add_header("authorization", "Bearer " + config["token"])
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            parsed = json.loads(response.read(4 * 1024 * 1024).decode("utf-8", "replace"))
+    except urllib.error.HTTPError as error:
+        try:
+            detail = object_value(json.loads(error.read(65536).decode("utf-8", "replace"))).get("json")
+            message = object_value(detail).get("message") or object_value(detail).get("code")
+        except (ValueError, OSError):
+            message = None
+        if error.code == 401:
+            return None, "the session token was rejected (401) - sign in again"
+        return None, "%s: HTTP %s%s" % (procedure, error.code, " " + str(message) if message else "")
+    except urllib.error.URLError as error:
+        return None, "cannot reach %s (%s)" % (config["url"], error.reason)
+    except (TimeoutError, OSError) as error:
+        return None, "cannot reach %s (%s)" % (config["url"], error)
+    except ValueError:
+        return None, "%s returned something that is not JSON" % procedure
+    envelope = object_value(parsed)
+    if "error" in envelope or envelope.get("json") is None:
+        return None, "%s: %s" % (procedure, object_value(envelope.get("error")).get("message")
+                                 or "unexpected reply")
+    return envelope.get("json"), None
+
+
+# -------------------------------------------------------------------- snapshot
+
+def snapshot(config):
+    now = time.time()
+    health, health_error = call(config, "health")
+    if health_error:
+        return {"generated_ts": now,
+                "app": {"running": False, "version": "", "pid": 0, "started_ts": 0.0,
+                        "alive_ts": now, "crash_seen": False, "url": config["url"],
+                        "error": health_error},
+                "counts": {"bots": 0, "awaiting": 0, "working": 0, "unread": 0,
+                           "unread_messages": 0, "groups": 0},
+                "sections": [], "bots": []}
+    rows, rows_error = call(config, "bots/list")
+    if rows_error:
+        return {"generated_ts": now,
+                "app": {"running": False, "version": text_value(object_value(health).get("version"), 40),
+                        "pid": 0, "started_ts": 0.0, "alive_ts": now, "crash_seen": False,
+                        "url": config["url"], "error": rows_error},
+                "counts": {"bots": 0, "awaiting": 0, "working": 0, "unread": 0,
+                           "unread_messages": 0, "groups": 0},
+                "sections": [], "bots": []}
+    sections_rows, _ = call(config, "botSections/list")
+    sections_by_id = {}
+    for section in list_value(sections_rows):
+        section_id = text_value(object_value(section).get("id"), 128)
+        if section_id:
+            sections_by_id[section_id] = text_value(object_value(section).get("name"), 100) or "Untitled"
+    groups_rows, _ = call(config, "groups/list")
+
+    bots = []
+    for row in list_value(rows)[:256]:
+        bot = object_value(row)
+        bot_id = text_value(bot.get("id"), 128)
+        if not bot_id or bot.get("archivedAt"):
+            continue
+        status = text_value(bot.get("status"), 32)
+        colour, shape, picture = parse_avatar(bot.get("color"), bot_id)
+        avatar = store_avatar(picture) if picture else None
+        awaiting = status in AWAITING
+        name = text_value(bot.get("name"), 100) or "(unnamed)"
+        bots.append({
+            "id": bot_id,
+            "name": name,
+            "title": text_value(bot.get("title"), 100),
+            "description": text_value(bot.get("description")),
+            "shape": shape,
+            "color": colour_name(colour),
+            # A picture wins over the shape, the way it does in the app.
+            "avatar": avatar,
+            "hex": COLORS.get(colour_name(colour)) if colour_name(colour) else (colour if isinstance(colour, str) else None),
+            "is_group": False,
+            "members": 0,
+            "unread": 1 if bot.get("unread") is True else 0,
+            "awaiting": awaiting,
+            "awaiting_reason": text_value(bot.get("preview"), 320) if awaiting else "",
+            "working": status in WORKING,
+            "working_since_ts": epoch(bot.get("updatedAt")) if status in WORKING else 0.0,
+            "muted": bot.get("notifyOnFinish") is not True,
+            "last_text": text_value(bot.get("preview"), 320),
+            "last_activity_ts": epoch(bot.get("updatedAt")),
+            "last_viewed_ts": 0.0,
+            "focused": False,
+            "pinned": bot.get("pinned") is True,
+            "status": status,
+            "computer_mode": text_value(bot.get("computerMode"), 16),
+            "section_id": text_value(bot.get("sectionId"), 128),
+            "thread_id": text_value(bot.get("threadId"), 128),
+        })
+
+    # Groups sit in the same sidebar as bots, so they belong in the same roster.
+    # They carry no colour of their own - the app draws a cluster of their
+    # members - so the first member's colour stands in for it here.
+    for row in list_value(groups_rows)[:64]:
+        group = object_value(row)
+        group_id = text_value(group.get("id"), 128)
+        if not group_id or group.get("archivedAt"):
+            continue
+        members = list_value(group.get("members"))
+        first = object_value(members[0]) if members else {}
+        member_colour, _, _ = parse_avatar(first.get("color"), text_value(first.get("botId"), 128))
+        bots.append({
+            "id": group_id,
+            "name": text_value(group.get("name"), 100) or "(unnamed group)",
+            "title": "",
+            "description": "",
+            "shape": "group",
+            "color": colour_name(member_colour),
+            "avatar": None,
+            "hex": COLORS.get(colour_name(member_colour)) if colour_name(member_colour)
+                   else (member_colour if isinstance(member_colour, str) else None),
+            "is_group": True,
+            "members": len(members),
+            "unread": 1 if group.get("unread") is True else 0,
+            "awaiting": False,
+            "awaiting_reason": "",
+            "working": False,
+            "working_since_ts": 0.0,
+            "muted": False,
+            "last_text": text_value(group.get("preview"), 320),
+            "last_activity_ts": epoch(group.get("updatedAt")),
+            "last_viewed_ts": 0.0,
+            "focused": False,
+            "pinned": group.get("pinned") is True,
+            "status": "",
+            "computer_mode": "",
+            "section_id": text_value(group.get("sectionId"), 128),
+            "thread_id": text_value(group.get("threadId"), 128),
+        })
+
+    grouped, seen = [], set()
+    for section_id, section_name in sections_by_id.items():
+        grouped.append({"id": section_id, "name": section_name,
+                        "bot_ids": [item["id"] for item in bots if item["section_id"] == section_id]})
+    loose = [bot["id"] for bot in bots if not bot["section_id"] or bot["section_id"] not in sections_by_id]
+    if loose and (grouped or len(loose) != len(bots)):
+        grouped.append({"id": "__loose__", "name": "Unassigned", "bot_ids": loose})
+
+    counts = {
+        "bots": len(bots),
+        "awaiting": sum(1 for bot in bots if bot["awaiting"]),
+        "working": sum(1 for bot in bots if bot["working"]),
+        "unread": sum(1 for bot in bots if bot["unread"] > 0),
+        "unread_messages": sum(bot["unread"] for bot in bots),
+        "groups": sum(1 for bot in bots if bot["is_group"]),
+    }
+    return {"generated_ts": now,
+            "app": {"running": True,
+                    "version": text_value(object_value(health).get("version"), 40),
+                    "pid": 0, "started_ts": 0.0, "alive_ts": now, "crash_seen": False,
+                    "url": config["url"]},
+            "counts": counts, "sections": grouped, "bots": bots}
+
+
+def signature_of(state):
+    """Cheap change detection over the fields the widget draws."""
+    digest = hashlib.sha256()
+    digest.update(json.dumps(object_value(state.get("app")).get("running")).encode())
+    digest.update(json.dumps(object_value(state.get("app")).get("error")).encode())
+    digest.update(json.dumps(object_value(state.get("app")).get("version")).encode())
+    digest.update(json.dumps(state.get("counts"), sort_keys=True).encode())
+    for bot in list_value(state.get("bots")):
+        for key in ("id", "name", "title", "shape", "color", "avatar", "unread", "awaiting",
+                    "awaiting_reason", "working", "muted", "last_text", "last_activity_ts",
+                    "pinned", "status"):
+            digest.update(json.dumps(object_value(bot).get(key)).encode())
+    for section in list_value(state.get("sections")):
+        digest.update(json.dumps(section, sort_keys=True).encode())
+    return digest.hexdigest()
+
+
+def main():
+    arguments = sys.argv[1:]
+    config = load_config()
+    interval = 5.0
+    if "--interval" in arguments:
+        try:
+            interval = max(0.5, float(arguments[arguments.index("--interval") + 1]))
+        except (IndexError, ValueError):
+            pass
+    elif config.get("interval"):
+        try:
+            interval = max(0.5, float(config["interval"]))
+        except (TypeError, ValueError):
+            pass
+    once = "--once" in arguments
+
+    last_signature, last_emit = None, 0.0
+    while True:
+        try:
+            state = snapshot(config)
+        except Exception as error:  # never take the widget down with us
+            state = {"generated_ts": time.time(),
+                     "app": {"running": False, "version": "", "pid": 0, "started_ts": 0.0,
+                             "alive_ts": time.time(), "crash_seen": False,
+                             "url": config["url"], "error": "watcher failed: %s" % error},
+                     "counts": {"bots": 0, "awaiting": 0, "working": 0, "unread": 0,
+                                "unread_messages": 0, "groups": 0},
+                     "sections": [], "bots": []}
+        signature = signature_of(state)
+        now = time.time()
+        # Emit on change, and at least once a minute so a dead server is noticed.
+        if signature != last_signature or now - last_emit > 60 or once:
+            try:
+                sys.stdout.write(json.dumps(state, separators=(",", ":")) + "\n")
+                sys.stdout.flush()
+            except BrokenPipeError:
+                return
+            last_signature, last_emit = signature, now
+        if once:
+            return
+        time.sleep(interval)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
