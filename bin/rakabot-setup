@@ -2,26 +2,54 @@
 # rakabot-setup - point the plugin at a Rakazo server and store a session token.
 #
 #   rakabot-setup --url https://rakazo.example
-#   rakabot-setup --url https://rakazo.example --token <token>
+#   rakabot-setup --url https://rakazo.example --token-file ~/rakazo-token
+#   rakabot-setup --url https://rakazo.example --token-stdin < token.txt
 #   rakabot-setup --url https://rakazo.example --check
 #
-# With no --token this signs in over Rakazo's own Better Auth endpoint, asking
-# for the password on the terminal. The password is never passed as an argument,
-# never written to disk and never printed. What lands on disk is the session
-# token, in a 0600 file, plus the server address in config.json.
+# With no token source this signs in over Rakazo's own Better Auth endpoint,
+# asking for the password on the terminal. The password is never passed as an
+# argument, never written to disk and never printed. What lands on disk is the
+# session token, in a 0600 file, plus the server address in config.json.
+#
+# There is deliberately no `--token`. A secret on a command line is readable from
+# /proc/<pid>/cmdline, which is world-readable, so while the setup runs any
+# process on the machine can read the token straight out of it. Pass it in a
+# protected file (--token-file), on stdin (--token-stdin), in the environment, or
+# let the setup sign in and obtain one.
+#
+# The address has to be https://: the session token travels in every request, and
+# the password travels during sign-in. Plain http:// is accepted only for a
+# loopback address, where the traffic never reaches a network.
 #
 # The token is a Rakazo session: revoke it by signing that session out, and treat
 # it like any other credential on this machine.
 import getpass
+import ipaddress
 import json
 import os
+import stat
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
 CONFIG_DIR = "~/.config/rakabot"
-UNSAFE_URL = ("http://", "https://")
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects rather than following them.
+
+    urllib follows a 3xx to another host and carries the Authorization header
+    along with it, which would hand the session token to whoever answered. A
+    Rakazo server has no reason to redirect an API call, so a 3xx is an error.
+    """
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+def http_opener():
+    return urllib.request.build_opener(NoRedirect)
 
 
 def config_path():
@@ -37,13 +65,38 @@ def fail(message):
     return 1
 
 
-def post(url, payload, headers=None, timeout=20):
+def is_loopback(host):
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def url_problem(url):
+    """An error string when secrets must not be sent to this address, else ""."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return "the address must start with https:// (or http:// for a loopback server)"
+    if parts.scheme == "https":
+        return ""
+    if is_loopback(parts.hostname):
+        return ""
+    return ("refusing plain http:// to %s: the session token travels in every request "
+            "and would be readable on the network. Use https://, or http://127.0.0.1 "
+            "for a server on this machine." % (parts.hostname or url))
+
+
+def post(base_url, path, payload, headers=None, timeout=20):
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=body, method="POST")
+    request = urllib.request.Request(base_url + path, data=body, method="POST")
     request.add_header("content-type", "application/json")
     for name, value in (headers or {}).items():
         request.add_header(name, value)
-    return urllib.request.urlopen(request, timeout=timeout)
+    return http_opener().open(request, timeout=timeout)
 
 
 def read_token(response, body):
@@ -67,7 +120,7 @@ def read_token(response, body):
 
 def sign_in(base_url, email, password):
     try:
-        response = post(base_url + "/api/auth/sign-in/email", {"email": email, "password": password})
+        response = post(base_url, "/api/auth/sign-in/email", {"email": email, "password": password})
     except urllib.error.HTTPError as error:
         detail = error.read(4096).decode("utf-8", "replace")
         try:
@@ -87,7 +140,7 @@ def sign_in(base_url, email, password):
 def probe(base_url, token):
     """One read against the API, so a bad token is caught here, not in the bar."""
     try:
-        response = post(base_url + "/rpc/bots/list", {"json": {}},
+        response = post(base_url, "/rpc/bots/list", {"json": {}},
                         {"authorization": "Bearer " + token}, timeout=15)
     except urllib.error.HTTPError as error:
         if error.code == 401:
@@ -103,6 +156,39 @@ def probe(base_url, token):
     if not isinstance(bots, list):
         return None, "the server did not return a bot list"
     return bots, ""
+
+
+def read_token_file(path):
+    """Read a token from a file only its owner can read."""
+    expanded = os.path.expanduser(path)
+    try:
+        info = os.stat(expanded)
+    except OSError as error:
+        return "", "cannot read %s (%s)" % (expanded, error.strerror or error)
+    if not stat.S_ISREG(info.st_mode):
+        return "", "%s is not a regular file" % expanded
+    if info.st_uid != os.getuid():
+        return "", "%s is not owned by you" % expanded
+    if info.st_mode & 0o077:
+        return "", ("%s is readable by other users (mode %s) - run `chmod 600 %s`"
+                    % (expanded, oct(info.st_mode & 0o777)[2:], expanded))
+    try:
+        with open(expanded, "r", encoding="utf-8") as handle:
+            token = handle.read().strip()
+    except OSError as error:
+        return "", "cannot read %s (%s)" % (expanded, error.strerror or error)
+    if not token:
+        return "", "%s is empty" % expanded
+    return token, ""
+
+
+def read_token_stdin():
+    if sys.stdin.isatty():
+        return "", "--token-stdin needs the token piped in, not a terminal"
+    token = sys.stdin.readline().strip()
+    if not token:
+        return "", "no token arrived on standard input"
+    return token, ""
 
 
 def write_credentials(base_url, token):
@@ -122,7 +208,8 @@ def write_credentials(base_url, token):
 
 
 def parse_arguments(arguments):
-    options = {"url": "", "token": os.environ.get("RAKABOT_TOKEN", ""), "email": "", "check": False}
+    options = {"url": "", "token": "", "token_file": "", "token_stdin": False,
+               "email": "", "check": False}
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -130,18 +217,27 @@ def parse_arguments(arguments):
             options["check"] = True
             index += 1
             continue
-        if argument in ("--url", "--token", "--email"):
+        if argument == "--token-stdin":
+            options["token_stdin"] = True
+            index += 1
+            continue
+        if argument == "--token":
+            raise ValueError("--token is gone on purpose: an argument is readable from "
+                             "/proc/<pid>/cmdline by every process on this machine. Use "
+                             "--token-file <path>, --token-stdin, or RAKABOT_TOKEN")
+        if argument in ("--url", "--token-file", "--email"):
             if index + 1 >= len(arguments):
                 raise ValueError("%s needs a value" % argument)
-            options[argument[2:]] = arguments[index + 1]
+            options[argument[2:].replace("-", "_")] = arguments[index + 1]
             index += 2
             continue
         raise ValueError("unknown argument %s" % argument)
     if not options["url"]:
         raise ValueError("--url is required (for example https://rakazo.example)")
     options["url"] = options["url"].rstrip("/")
-    if not options["url"].startswith(UNSAFE_URL):
-        raise ValueError("--url must start with http:// or https://")
+    problem = url_problem(options["url"])
+    if problem:
+        raise ValueError(problem)
     return options
 
 
@@ -149,10 +245,20 @@ def main():
     try:
         options = parse_arguments(sys.argv[1:])
     except ValueError as error:
-        return fail("%s\nusage: rakabot-setup --url <server> [--token <token>] [--email <email>] [--check]"
-                    % error)
+        return fail("%s\nusage: rakabot-setup --url <server> [--token-file <path>] "
+                    "[--token-stdin] [--email <email>] [--check]" % error)
 
-    base_url, token = options["url"], options["token"]
+    base_url = options["url"]
+    token = os.environ.get("RAKABOT_TOKEN", "").strip()
+    if not token and options["token_file"]:
+        token, error = read_token_file(options["token_file"])
+        if error:
+            return fail(error)
+    if not token and options["token_stdin"]:
+        token, error = read_token_stdin()
+        if error:
+            return fail(error)
+
     if not token:
         email = options["email"]
         try:

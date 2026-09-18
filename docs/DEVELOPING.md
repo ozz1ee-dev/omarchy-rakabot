@@ -147,6 +147,28 @@ access it does not use. When bumping an action, resolve the new SHA and keep the
 - `rakabot-watch` defaults to `--notify off`: a watcher started by hand, or by a
   test, must never post into the live session.
 
+**Credentials never touch a command line, and never ride on http**
+
+- A secret in argv is public: `/proc/<pid>/cmdline` is mode 0444, so while the
+  process lives, *every* process on the machine can read the token out of it.
+  `/proc/<pid>/environ` is 0400 - only the same user - which is why `RAKABOT_TOKEN`
+  is acceptable and `--token` is not. Measured, not assumed; the marketplace
+  reviewer was right to reject it.
+- `--token-file` therefore insists on a regular file, owned by the caller, mode
+  0600. A file others can read is refused with the `chmod` to run, rather than
+  quietly accepted: the point of the flag is a credential that is not exposed.
+- `https://` is required; `http://` passes only for a loopback address
+  (`ipaddress.ip_address(host).is_loopback`, plus `localhost`). The tests run
+  against `http://127.0.0.1`, which is exactly why the exception has to exist and
+  why it is validated rather than string-matched.
+- **urllib follows redirects and resends `Authorization`.** Reproduced: a 302 to
+  another host delivered the bearer header to that host. Both scripts install an
+  opener with a `NoRedirect` handler that returns `None` from `redirect_request`,
+  which turns a 3xx into an `HTTPError` instead.
+- The watcher spawns `rakabot-open` and the notification sender; without `env=`
+  they inherit everything, token included. `child_environment()` strips the secret
+  variables so a child gets only what it needs.
+
 **Rakazo's RPC surface is not a contract**
 
 - The API is oRPC over `POST /rpc/<procedure>` with `{"json": {...}}` envelopes,

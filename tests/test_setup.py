@@ -29,6 +29,14 @@ def _load():
     return module
 
 
+def protected_token_file(home, token='tok-123', name='given-token'):
+    """A token file as the setup demands one: ours, and nobody else's to read."""
+    path = home / name
+    path.write_text(token + '\n')
+    path.chmod(0o600)
+    return path
+
+
 def run_setup(*arguments, home):
     environment = dict(os.environ)
     environment['HOME'] = str(home)
@@ -71,8 +79,8 @@ class SetupTest(unittest.TestCase):
         self.config = self.home / '.config/rakabot/config.json'
         self.token = self.home / '.config/rakabot/token'
 
-    def test_a_given_token_is_stored_private_and_used(self):
-        result = run_setup('--url', self.server.url, '--token', 'tok-123', home=self.home)
+    def test_a_token_file_is_stored_private_and_used(self):
+        result = run_setup('--url', self.server.url, '--token-file', str(protected_token_file(self.home)), home=self.home)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('answered: 0 bots', result.stdout)
         self.assertEqual(json.loads(self.config.read_text())['url'], self.server.url)
@@ -82,7 +90,7 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(self.server.requests[-1]['authorization'], 'Bearer tok-123')
 
     def test_the_written_config_is_what_the_watcher_reads(self):
-        run_setup('--url', self.server.url, '--token', 'tok-123', home=self.home)
+        run_setup('--url', self.server.url, '--token-file', str(protected_token_file(self.home)), home=self.home)
         watcher = importlib.machinery.SourceFileLoader('w', str(SETUP.parent / 'rakabot-watch'))
         spec = importlib.util.spec_from_loader('w', watcher)
         module = importlib.util.module_from_spec(spec)
@@ -135,18 +143,18 @@ class SetupTest(unittest.TestCase):
 
     def test_a_rejected_token_is_caught_before_the_bar_sees_it(self):
         self.server.mode = 'unauthorized'
-        result = run_setup('--url', self.server.url, '--token', 'stale', home=self.home)
+        result = run_setup('--url', self.server.url, '--token-file', str(protected_token_file(self.home, 'stale')), home=self.home)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('401', result.stderr)
 
     def test_check_only_writes_nothing(self):
-        result = run_setup('--url', self.server.url, '--token', 'tok-123', '--check', home=self.home)
+        result = run_setup('--url', self.server.url, '--token-file', str(protected_token_file(self.home)), '--check', home=self.home)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.config.exists())
         self.assertFalse(self.token.exists())
 
     def test_the_url_has_to_be_a_url(self):
-        result = run_setup('--url', 'rakazo.example', '--token', 'tok', home=self.home)
+        result = run_setup('--url', 'rakazo.example', '--token-file', str(protected_token_file(self.home)), home=self.home)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('must start with http', result.stderr)
 
@@ -175,10 +183,81 @@ class SetupTest(unittest.TestCase):
         response.headers = {}
         self.assertEqual(module.read_token(response, '{"token": "from-body"}'), 'from-body')
 
-    def test_an_env_token_is_picked_up(self):
+    def test_the_url_has_to_be_https_unless_it_is_loopback(self):
         module = _load()
-        with mock.patch.dict(os.environ, {'RAKABOT_TOKEN': 'env-token'}):
-            self.assertEqual(module.parse_arguments(['--url', self.server.url])['token'], 'env-token')
+        self.assertEqual(module.url_problem('https://rakazo.example'), '')
+        self.assertEqual(module.url_problem('http://127.0.0.1:8080'), '')
+        self.assertEqual(module.url_problem('http://localhost:9000'), '')
+        self.assertEqual(module.url_problem('http://[::1]:1'), '')
+        for url in ('http://rakazo.example', 'http://192.168.1.10:8080', 'ftp://rakazo.example'):
+            self.assertNotEqual(module.url_problem(url), '', url)
+
+    def test_a_plain_http_server_is_refused_before_anything_is_sent(self):
+        result = run_setup('--url', 'http://rakazo.example', home=self.home)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('refusing plain http', result.stderr)
+        self.assertFalse(self.token.exists())
+        self.assertEqual(self.server.sign_ins, [])
+
+    def test_a_loopback_http_server_still_works(self):
+        # The test server is http://127.0.0.1:PORT and must keep working: the whole
+        # suite runs against it, and a server on this machine never hits a network.
+        result = run_setup('--url', self.server.url, '--token-file',
+                           str(protected_token_file(self.home)), home=self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.token.exists())
+
+    def test_the_token_cannot_come_from_an_argument(self):
+        # A secret in argv is readable from /proc/<pid>/cmdline, which is world
+        # readable, so the flag is refused outright with a way forward.
+        result = run_setup('--url', self.server.url, '--token', 'tok-123', home=self.home)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--token is gone on purpose', result.stderr)
+        self.assertIn('--token-file', result.stderr)
+
+    def test_a_token_file_readable_by_others_is_refused(self):
+        loose = protected_token_file(self.home, 'tok-123', 'loose')
+        loose.chmod(0o644)
+        result = run_setup('--url', self.server.url, '--token-file', str(loose), home=self.home)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('readable by other users', result.stderr)
+        self.assertIn('chmod 600', result.stderr)
+        self.assertFalse(self.token.exists())
+
+    def test_a_missing_token_file_is_reported(self):
+        result = run_setup('--url', self.server.url, '--token-file', str(self.home / 'nope'), home=self.home)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot read', result.stderr)
+
+    def test_the_token_can_come_from_stdin(self):
+        module = _load()
+        with mock.patch.object(sys, 'stdin', io.StringIO('piped-token\n')):
+            with mock.patch.object(sys.stdin, 'isatty', lambda: False, create=True):
+                token, error = module.read_token_stdin()
+        self.assertEqual((token, error), ('piped-token', ''))
+
+    def test_stdin_refuses_a_terminal(self):
+        module = _load()
+        with mock.patch.object(sys, 'stdin', io.StringIO('piped-token\n')):
+            with mock.patch.object(sys.stdin, 'isatty', lambda: True, create=True):
+                token, error = module.read_token_stdin()
+        self.assertEqual(token, '')
+        self.assertIn('needs the token piped in', error)
+
+    def test_an_empty_stdin_is_reported(self):
+        module = _load()
+        with mock.patch.object(sys, 'stdin', io.StringIO('\n')):
+            with mock.patch.object(sys.stdin, 'isatty', lambda: False, create=True):
+                token, error = module.read_token_stdin()
+        self.assertEqual(token, '')
+        self.assertIn('no token arrived', error)
+
+    def test_a_redirect_is_refused_instead_of_carrying_the_token(self):
+        # urllib would follow a 3xx to another host and resend Authorization there.
+        module = _load()
+        opener = module.http_opener()
+        self.assertTrue(any(isinstance(h, module.NoRedirect) for h in opener.handlers),
+                        'the opener must refuse redirects')
 
 
 if __name__ == '__main__':

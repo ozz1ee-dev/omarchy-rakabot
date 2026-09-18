@@ -168,6 +168,45 @@ class ContractTest(WatcherHarness):
         for request in self.server.requests:
             self.assertEqual(request['body'], {'json': {}}, 'a read call must not send arguments')
 
+    def test_plain_http_to_a_remote_host_is_refused_before_the_token_is_sent(self):
+        # The token rides in every request, so a plain-http address that is not
+        # loopback must never be used - and the bar must say why, not go quiet.
+        config = self.config(url='http://rakazo.example')
+        state = self.module.snapshot(config)
+        self.assertFalse(state['app']['running'])
+        self.assertIn('refusing plain http', state['app']['error'])
+        self.assertEqual(self.server.requests, [])
+
+    def test_https_is_accepted(self):
+        self.assertEqual(self.module.url_problem('https://rakazo.example'), '')
+
+    def test_a_loopback_http_server_is_accepted(self):
+        # The whole suite talks to http://127.0.0.1, and a server on this machine
+        # never puts the token on a network.
+        self.assertEqual(self.module.url_problem(self.server.url), '')
+
+    def test_a_non_http_scheme_is_refused(self):
+        self.assertNotEqual(self.module.url_problem('ftp://rakazo.example'), '')
+        self.assertNotEqual(self.module.url_problem('file:///etc/passwd'), '')
+        self.assertNotEqual(self.module.url_problem(''), '')
+
+    def test_children_do_not_inherit_the_token(self):
+        os.environ['RAKABOT_TOKEN'] = 'env-token'
+        self.addCleanup(os.environ.pop, 'RAKABOT_TOKEN', None)
+        child = self.module.child_environment()
+        self.assertNotIn('RAKABOT_TOKEN', child)
+        self.assertIn('PATH', child, 'everything else must survive')
+        self.assertEqual(os.environ.get('RAKABOT_TOKEN'), 'env-token',
+                         'the parent environment itself is untouched')
+
+    def test_a_redirect_is_refused_rather_than_followed_with_the_token(self):
+        # A 3xx to another host would resend Authorization there; urllib follows it
+        # by default, so the watcher installs an opener that does not.
+        import urllib.request as ur
+        self.assertTrue(hasattr(self.module, 'NoRedirect'))
+        opener = ur.build_opener(self.module.NoRedirect)
+        self.assertTrue(any(isinstance(h, self.module.NoRedirect) for h in opener.handlers))
+
     def test_token_and_envelope(self):
         self.snapshot(bots=[bot()])
         for request in self.server.requests:

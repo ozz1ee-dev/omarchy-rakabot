@@ -49,8 +49,17 @@ typed at the prompt, never stored, never passed as an argument:
 ~/.config/omarchy/plugins/ozz1ee.rakabot/bin/rakabot-setup --url https://rakazo.example
 ```
 
-Already have a token? `--token <token>`, or set `RAKABOT_TOKEN`. To prove a server
-answers without writing anything, add `--check`.
+Already have a token? Put it in a file only you can read and pass the file -
+`--token-file ~/rakazo-token` (mode 0600, or the setup refuses it), or pipe it in
+with `--token-stdin`, or set `RAKABOT_TOKEN`. There is no `--token`: an argument is
+readable from `/proc/<pid>/cmdline` by every process on the machine, so a token
+passed that way is a token handed out. To prove a server answers without writing
+anything, add `--check`.
+
+The address must be `https://`. Plain `http://` is accepted only for a loopback
+server (`127.0.0.1`, `::1`, `localhost`) - the session token travels in every
+request, and the password during sign-in, so anything else would put them on the
+wire. Redirects are refused rather than followed, for the same reason.
 
 Requirements: `python3`, `wtype` (for switching the open window to a picked bot),
 `omarchy-notification-send` or `notify-send` (for notifications; only the former

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0
+
+- **`--token` is gone.** A secret in a command line is readable from
+  `/proc/<pid>/cmdline`, which is world-readable, so any process on the machine
+  could read the session token while the setup ran. Use `--token-file <path>`
+  (must be owned by you and mode 0600, or it is refused), `--token-stdin`, or
+  `RAKABOT_TOKEN`.
+- **The address must be `https://`**, in the setup and in the watcher. Plain
+  `http://` is allowed only for a loopback address, where the traffic never
+  reaches a network; anything else is refused with the reason, before the password
+  or the token is sent.
+- Redirects are refused instead of followed: `urllib` follows a 3xx to another
+  host and resends the `Authorization` header there, which would hand the session
+  token to whoever answered.
+- The watcher strips `RAKABOT_TOKEN` from the environment of the processes it
+  starts (`rakabot-open`, the notification sender), so a child cannot read a
+  credential it does not need.
+
 ## 0.4.0
 
 - Rakabot sends its own notifications: a bot that writes or starts waiting for you
