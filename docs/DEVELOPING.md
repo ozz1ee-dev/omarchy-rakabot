@@ -53,6 +53,17 @@ throw the roster away. `scrub` redacts names and messages for a screen share;
 `Avatar.qml` means a full restart, or you are looking at the old surface and
 chasing a bug that is not there.
 
+**CI pins its actions and asks for nothing**
+
+`.github/workflows/checks.yml` references third-party actions by full commit SHA,
+never by a major tag: `@v5` can be repointed at different code, and that code
+would then run in this repository's CI context (a marketplace reviewer rejected a
+sibling submission over exactly that). The workflow also declares the minimum it
+needs - `permissions: contents: read` - so the default token keeps no write
+access it does not use. When bumping an action, resolve the new SHA and keep the
+`# vN` comment so a human can still see the version:
+`gh api repos/actions/checkout/git/ref/tags/v5 -q .object.sha`.
+
 ## Things that cost a day to learn
 
 **A panel is narrower than it looks**
